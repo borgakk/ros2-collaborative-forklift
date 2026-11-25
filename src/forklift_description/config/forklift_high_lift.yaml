@@ -1,0 +1,42 @@
+# Overlay for the high-capacity differential forklift (robot 1). It replaces whole sections
+# of forklift_params.yaml (xacro argument params_overlay; forklift.urdf.xacro). All other
+# values come from the base file. The drive is differential (drive_type is not set).
+# SI units.
+#
+# Compared with the standard robot: a much taller mast and lift (fork top up to
+# min_height + max_travel = 2.05 m), a faster lift motor, and a heavier mast and counterweight.
+# The drive and the navigation speeds are the same as for the standard robot (slow). The
+# rated load is the standard value (500 kg). A taller lift moves the center of mass up and
+# forward: the heavier counterweight keeps the forward tipping margin of the standard robot
+# (test_robot_types.py).
+
+counterweight:
+  length: 0.30             # at the rear end of the chassis, on the top
+  width: 0.64
+  height: 0.30
+  mass: 600.0              # standard robot: 400 kg
+
+mast:
+  x: 0.26
+  upright_y: 0.30
+  upright_size_x: 0.08
+  upright_size_y: 0.06
+  bottom_z: 0.17
+  height: 2.85             # top of the mast above the ground; max fork top 2.05 + 0.6 carriage + margin
+  mass: 200.0              # standard robot: 120 kg
+
+lift:
+  min_height: 0.05
+  max_travel: 2.00         # fork top from 0.05 m to 2.05 m
+  initial_height: 0.02
+  max_velocity: 0.60       # m/s (standard robot: 0.20). 2 m takes about 4.5 s.
+  max_effort: 10000.0      # N
+  rated_load: 500.0        # kg
+  damping: 200.0
+
+# The lift profile of the lift controller (the default is 0.15 m/s and 0.3 m/s^2). 2 m take
+# about 5 s. The URDF limit (lift.max_velocity) stays the hard maximum.
+lift_controller:
+  lift_controller:
+    default_velocity: 0.50
+    max_acceleration: 0.8

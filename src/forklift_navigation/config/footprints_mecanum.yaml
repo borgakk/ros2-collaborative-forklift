@@ -1,0 +1,51 @@
+# Footprints of the Mecanum forklift in base_footprint (x forward to the forks, y left), metres.
+# This is the footprints.yaml of the standard robot with a different rear section. The
+# standard robot has 2 narrow rear casters (±0.49 m). The Mecanum robot has 2 rear drive wheels
+# at (-1.00, ±0.40). Their collision spheres (r = 0.18) reach x = -1.18 and y = ±0.58. With a
+# margin of approximately 3 cm, the rear section is ±0.61 m wide from x = -0.79 to the rear.
+# The front section (front wheels, mast, forks, pallet) is the same as footprints.yaml.
+# A test (test_robot_type_footprints.py) makes sure that each URDF collision primitive of the
+# Mecanum robot is in the footprint, and that the front sections are the same.
+footprints:
+  unloaded:
+    - [1.41, 0.28]
+    - [0.41, 0.28]
+    - [0.41, 0.49]
+    - [0.21, 0.49]
+    - [0.21, 0.61]
+    - [-0.21, 0.61]
+    - [-0.21, 0.49]
+    - [-0.79, 0.49]
+    - [-0.79, 0.61]
+    - [-1.25, 0.61]
+    - [-1.25, -0.61]
+    - [-0.79, -0.61]
+    - [-0.79, -0.49]
+    - [-0.21, -0.49]
+    - [-0.21, -0.61]
+    - [0.21, -0.61]
+    - [0.21, -0.49]
+    - [0.41, -0.49]
+    - [0.41, -0.28]
+    - [1.41, -0.28]
+  loaded:
+    - [1.41, 0.43]
+    - [0.41, 0.43]
+    - [0.41, 0.49]
+    - [0.21, 0.49]
+    - [0.21, 0.61]
+    - [-0.21, 0.61]
+    - [-0.21, 0.49]
+    - [-0.79, 0.49]
+    - [-0.79, 0.61]
+    - [-1.25, 0.61]
+    - [-1.25, -0.61]
+    - [-0.79, -0.61]
+    - [-0.79, -0.49]
+    - [-0.21, -0.49]
+    - [-0.21, -0.61]
+    - [0.21, -0.61]
+    - [0.21, -0.49]
+    - [0.41, -0.49]
+    - [0.41, -0.43]
+    - [1.41, -0.43]

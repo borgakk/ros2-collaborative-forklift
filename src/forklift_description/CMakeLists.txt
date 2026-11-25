@@ -20,6 +20,12 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_urdf_model test/test_urdf_model.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     TIMEOUT 120)
+  ament_add_pytest_test(test_mecanum_model test/test_mecanum_model.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120)
+  ament_add_pytest_test(test_robot_types test/test_robot_types.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120)
 
   find_package(launch_testing_ament_cmake REQUIRED)
   add_launch_test(test/test_mock_control_interfaces.py TIMEOUT 90)

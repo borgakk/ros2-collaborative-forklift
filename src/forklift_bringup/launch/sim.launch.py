@@ -47,6 +47,8 @@ def generate_launch_description():
                               description='Spawn test-only props with invalid QR codes'),
         DeclareLaunchArgument('spawn_loads', default_value='true',
                               description='Spawn the QR-labelled loads (false for mapping)'),
+        DeclareLaunchArgument('robot_type', default_value='standard',
+                              description='standard | high_lift | mecanum'),
         DeclareLaunchArgument('mode', default_value='navigation',
                               description='navigation (saved map + AMCL + Nav2) | mapping '
                                           '(slam_toolbox) | none'),
@@ -64,6 +66,7 @@ def generate_launch_description():
                 x=LaunchConfiguration('x'), y=LaunchConfiguration('y'),
                 yaw=LaunchConfiguration('yaw'), mode=LaunchConfiguration('mode'),
                 perception=LaunchConfiguration('perception'),
+                robot_type=LaunchConfiguration('robot_type'),
                 start_mission=LaunchConfiguration('start_mission'),
                 mission_manager='true', fleet_agent='false'),
 

@@ -34,8 +34,16 @@
           <state_interface name="velocity"/>
         </joint>
       </xacro:macro>
-      <xacro:drive_joint name="left_drive_wheel_joint"/>
-      <xacro:drive_joint name="right_drive_wheel_joint"/>
+      <xacro:if value="${p.get('drive_type', 'diff') == 'diff'}">
+        <xacro:drive_joint name="left_drive_wheel_joint"/>
+        <xacro:drive_joint name="right_drive_wheel_joint"/>
+      </xacro:if>
+      <xacro:if value="${p.get('drive_type', 'diff') == 'mecanum'}">
+        <xacro:drive_joint name="front_left_drive_wheel_joint"/>
+        <xacro:drive_joint name="front_right_drive_wheel_joint"/>
+        <xacro:drive_joint name="rear_left_drive_wheel_joint"/>
+        <xacro:drive_joint name="rear_right_drive_wheel_joint"/>
+      </xacro:if>
 
       <!-- Velocity commands, as a hydraulic lift valve that controls the flow. Position commands
            were not used: in Gazebo/DART, if a position loop requests a velocity above the

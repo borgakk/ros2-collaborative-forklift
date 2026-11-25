@@ -120,6 +120,87 @@ check these items:
   interfaces and 7 state interfaces are present and not claimed, and `robot_state_publisher`
   publishes all 16 child frames.
 
+## Robot types
+
+The fleet has two different robots. The standard robot is the original differential forklift
+and stays unchanged. Each type is the same xacro with an overlay file that replaces sections of
+`forklift_params.yaml` (xacro argument `params_overlay`). `robot.launch.py` selects the type with
+`robot_type:=standard|high_lift|mecanum`. `multi_sim.launch.py` reads the type of each robot from
+`robot_type.<id>` in `forklift_fleet/config/fleet.yaml` (use `robot_types:=standard` there for two
+standard robots).
+
+| | `standard` | `high_lift` (robot 1) | `mecanum` (robot 2) |
+|---|---|---|---|
+| Overlay | none | `forklift_high_lift.yaml` | `forklift_mecanum.yaml` |
+| Drive | differential, 2 casters | differential, 2 casters | 4 Mecanum wheels |
+| Navigation speed (Nav2) | 0.4 m/s | 0.4 m/s | 1.0 m/s (hard limit 1.5 m/s) |
+| Lift travel / max fork top | 1.00 m / 1.05 m | **2.00 m / 2.05 m** | 0.45 m / 0.50 m |
+| Mast height | 2.15 m | **2.85 m** | **1.20 m** |
+| Lift speed (hard / profile) | 0.20 / 0.15 m/s | 0.60 / 0.50 m/s | 0.50 / 0.40 m/s |
+| Rated load | 500 kg | 500 kg | 150 kg |
+| Lift actuator effort | 10000 N | 10000 N | 4000 N |
+| Counterweight | 400 kg | 600 kg | 400 kg |
+| Body color | orange | orange | blue |
+
+The three robot types have the same sensors, forks, chassis and camera. The high-lift robot has a
+heavier counterweight and mast, so that the forward tipping margin at 2 m with the rated load
+(11.6 cm, with 0.5 m/s² braking) is better than that of the standard robot (6.3 cm).
+`forklift_description/test/test_robot_types.py` checks the lift range, the capacity order, the
+mast height, the stability and that each type can do the existing mission (the platforms are at
+0.25 m). The overlay `navigation` and `lift_controller` sections change the Nav2 parameters and the
+lift profile of one robot (`robot.launch.py`). Capacity and lift range are **not yet used by the
+fleet allocator**: it can assign a load to a robot that cannot lift it.
+
+## Mecanum variant (`drive_type: mecanum`)
+
+The fast robot has 4 driven wheels. It uses the same xacro as the differential robot. The
+overlay `config/forklift_mecanum.yaml` replaces the `drive_wheel` section and sets
+`drive_type: mecanum` (xacro argument `params_overlay`). `robot.launch.py` selects it with
+`drive_type:=mecanum`.
+
+| Item | Differential (default) | Mecanum |
+|---|---|---|
+| Wheels | 2 driven front wheels + 2 rear casters | 4 driven wheels of the same size (r = 0.18 m), at x = 0 and x = −1.00 m, y = ±0.40 m |
+| Joints | `left/right_drive_wheel_joint` | `front/rear_left/right_drive_wheel_joint` (continuous, axis +y) |
+| Base controller | `diff_drive_controller` (`controllers.yaml`) | `mecanum_drive_controller` (`controllers_mecanum.yaml`) |
+| Command topic | `forklift_base_controller/cmd_vel` | `forklift_base_controller/reference` (`TwistStamped`: `linear.x`, `linear.y`, `angular.z`) |
+| Odometry topic | `forklift_base_controller/odom` | `forklift_base_controller/odometry` (the launch file changes `odom0` of the EKF) |
+
+**Dynamics.** The rollers are not modelled. Each wheel is a sphere. In Gazebo, the contact has
+an anisotropic friction: `mu` (high) along the friction direction `fdir1` and `mu2` (about
+zero) along the roller axis. `fdir1` is at 45° to the wheel plane: (1, −1) for front-left and
+rear-right, (1, 1) for front-right and rear-left. The direction is expressed in
+`base_footprint`, not in the wheel frame, because the wheel link rotates
+(`forklift_simulation/urdf/forklift_gazebo.xacro`). This is the method of the Gazebo
+mecanum demo (`gz-sim` `worlds/mecanum_drive.sdf`). The friction extension must use the nested
+`<collision><surface>` form: the plain `<fdir1>` URDF tag loses the frame in the SDF.
+
+**Pivot.** The wheel rectangle has its center 0.5 m behind `base_footprint` (which is above the
+front axle). `kinematics.base_frame_offset.x = wheelbase / 2` makes the controller turn the
+robot about `base_footprint`, as the differential robot does. The odometry has the same frame.
+
+**Measured in Gazebo (ground truth, no load, 0.3 to 0.4 m/s, no GUI; repeat it with
+`scripts/drive_test.py`):** forward, backward and lateral distance agree with the
+command within 1 cm. A turn of 2.0 rad has 0.00 m of position drift. The wheel odometry agrees
+with the ground truth. The EKF fuses `vx`, `vy` and `vyaw` of the odometry.
+
+### Limitations of the Mecanum variant
+* The friction model is ideal: there is no roller slip, no roller compliance and no
+  load-dependent traction. Real Mecanum wheels slip more, mainly in lateral motion. The result
+  is better than a real vehicle. Tune `mecanum.mu` and `mecanum.mu2` if a more realistic
+  behaviour is necessary.
+* The rear LiDAR protects only reverse motion (`linear.x < 0`). There is no protection for
+  lateral and diagonal motion.
+* Nav2 uses the regulated pure pursuit controller. It does not command lateral motion. The
+  robot drives like a differential robot (faster, with the Mecanum footprint
+  `footprints_mecanum.yaml`). The lateral motion works with the keyboard and with direct
+  commands. A Nav2 controller that uses it (for example MPPI) is not set up yet.
+* If `vx`, `vy` and `wz` are all at their limits at the same time, the wheel speed limit is
+  exceeded. Navigation must use smaller combined limits.
+* The Mecanum robot did the existing mission in the fleet together with the high-lift robot
+  (`docs/PROJECT_PLAN.md`, section 4). The pickup/place skills still use the same slow approach
+  and insertion speeds.
+
 ## Known limitations
 * The caster behavior is an approximation (spheres with no friction).
 * There is no mast tilt and no fork side-shift.

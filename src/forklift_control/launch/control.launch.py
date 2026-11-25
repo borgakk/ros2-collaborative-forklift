@@ -44,7 +44,7 @@ def generate_launch_description():
                     {'use_sim_time': use_sim_time,
                      'frame_prefix': LaunchConfiguration('frame_prefix')}],
         remappings=[('cmd_vel_in', 'cmd_vel/safety_in'),
-                    ('cmd_vel_out', 'forklift_base_controller/cmd_vel')],
+                    ('cmd_vel_out', LaunchConfiguration('base_cmd_topic'))],
     )
     lift = Node(
         package='forklift_control', executable='lift_controller', output='screen',
@@ -58,5 +58,8 @@ def generate_launch_description():
         DeclareLaunchArgument('lift_file', default_value=cfg('lift_controller.yaml')),
         DeclareLaunchArgument('rear_safety_file', default_value=cfg('rear_safety.yaml')),
         DeclareLaunchArgument('frame_prefix', default_value=''),
+        DeclareLaunchArgument('base_cmd_topic', default_value='forklift_base_controller/cmd_vel',
+                              description='command topic of the base controller (the mecanum '
+                                          'controller uses forklift_base_controller/reference)'),
         spawner, twist_mux, rear_safety, lift,
     ])

@@ -17,7 +17,7 @@
     frame_prefix      added before each sensor frame id, for example "forklift_1/"  []
     ros_namespace     namespace of the controller manager of this robot       []
 -->
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" xmlns:gz="http://gazebosim.org/schema">
 
   <xacro:arg name="controllers_file" default=""/>
   <xacro:arg name="robot_name" default="forklift"/>
@@ -49,8 +49,47 @@
       <minDepth>0.001</minDepth>
     </gazebo>
   </xacro:macro>
-  <xacro:wheel_contact link="left_drive_wheel_link"/>
-  <xacro:wheel_contact link="right_drive_wheel_link"/>
+  <xacro:property name="drive_type" value="${params.get('drive_type', 'diff')}"/>
+  <xacro:if value="${drive_type == 'diff'}">
+    <xacro:wheel_contact link="left_drive_wheel_link"/>
+    <xacro:wheel_contact link="right_drive_wheel_link"/>
+  </xacro:if>
+
+  <!-- Mecanum wheels: sphere contact with an anisotropic friction (see config/forklift_mecanum.yaml).
+       fdir1 = friction direction mu (the wheel pushes the ground along it), at 45 deg to the
+       wheel plane. mu2 acts along the roller axis (free rolling). The direction is given in
+       base_footprint (the robot frame), not in the wheel frame: the wheel link rotates, and a
+       direction in the wheel frame would rotate with it. The pattern is the X layout:
+       FL and RR: (1 -1), FR and RL: (1 1). With the +y wheel axes, this gives
+       vy > 0 when FL and RR turn backward and FR and RL turn forward.-->
+  <xacro:macro name="mecanum_wheel_contact" params="link dir">
+    <gazebo reference="${link}">
+      <collision>
+        <surface>
+          <friction>
+            <ode>
+              <mu>${params['mecanum']['mu']}</mu>
+              <mu2>${params['mecanum']['mu2']}</mu2>
+              <fdir1 gz:expressed_in="base_footprint">${dir}</fdir1>
+            </ode>
+          </friction>
+          <contact>
+            <ode>
+              <kp>1.0e7</kp>
+              <kd>1.0e3</kd>
+              <min_depth>0.001</min_depth>
+            </ode>
+          </contact>
+        </surface>
+      </collision>
+    </gazebo>
+  </xacro:macro>
+  <xacro:if value="${drive_type == 'mecanum'}">
+    <xacro:mecanum_wheel_contact link="front_left_drive_wheel_link" dir="1 -1 0"/>
+    <xacro:mecanum_wheel_contact link="rear_right_drive_wheel_link" dir="1 -1 0"/>
+    <xacro:mecanum_wheel_contact link="front_right_drive_wheel_link" dir="1 1 0"/>
+    <xacro:mecanum_wheel_contact link="rear_left_drive_wheel_link" dir="1 1 0"/>
+  </xacro:if>
 
   <!-- Rear support spheres: almost no friction. Thus, they operate as free casters.-->
   <xacro:macro name="caster_contact" params="link">
@@ -62,8 +101,10 @@
       <minDepth>0.001</minDepth>
     </gazebo>
   </xacro:macro>
-  <xacro:caster_contact link="left_caster_link"/>
-  <xacro:caster_contact link="right_caster_link"/>
+  <xacro:if value="${drive_type == 'diff'}">
+    <xacro:caster_contact link="left_caster_link"/>
+    <xacro:caster_contact link="right_caster_link"/>
+  </xacro:if>
 
   <!-- Fork tines: steel. The friction prevents pallet movement during transport.-->
   <gazebo reference="left_fork_link"><mu1>0.6</mu1><mu2>0.6</mu2></gazebo>

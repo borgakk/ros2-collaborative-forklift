@@ -42,6 +42,7 @@ def robots(context):
     with open(fleet_file, encoding='utf-8') as f:
         cfg = yaml.safe_load(f)['fleet_coordinator']['ros__parameters']
     actions = []
+    override = LaunchConfiguration('robot_types').perform(context)
     for rid in cfg['robots']:
         x, y, yaw = cfg[f'home.{rid}'] if f'home.{rid}' in cfg else cfg['home'][rid]
         # Give each robot.launch.py argument explicitly. Included launch files get the
@@ -49,6 +50,8 @@ def robots(context):
         # mission. It must not start the mission manager of each robot.
         actions.append(include('forklift_bringup', 'robot.launch.py', namespace=rid,
                                x=str(x), y=str(y), yaw=str(yaw), mode='navigation',
+                               robot_type=(cfg.get(f'robot_type.{rid}', 'standard')
+                                           if override == 'fleet' else override),
                                perception=LaunchConfiguration('perception'),
                                mission_manager='true', start_mission='false',
                                fleet_agent='true',
@@ -66,6 +69,9 @@ def generate_launch_description():
         DeclareLaunchArgument('gui', default_value='false'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('perception', default_value='true'),
+        DeclareLaunchArgument('robot_types', default_value='fleet',
+                              description='fleet = robot_type.<id> of fleet.yaml; or one of '
+                                          'standard | high_lift | mecanum for all robots'),
         DeclareLaunchArgument('start_mission', default_value='false',
                               description='Start the fleet mission automatically'),
         include('forklift_simulation', 'gazebo.launch.py', gui=LaunchConfiguration('gui'),

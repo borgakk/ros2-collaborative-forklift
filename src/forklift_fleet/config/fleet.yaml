@@ -8,6 +8,12 @@ fleet_coordinator:
     # Home (parking) pose for each robot in the map frame: x, y, yaw. This is also the waiting location of the robot.
     home.forklift_1: [-6.0, 0.0, 0.0]
     home.forklift_2: [5.0, 0.0, 3.14159]
+    # Robot type of each robot (forklift_bringup/launch/robot.launch.py): standard | high_lift | mecanum.
+    # forklift_1: slow, differential, 3 m lift, high capacity. forklift_2: fast Mecanum, 0.5 m lift,
+    # low capacity. The coordinator does not use these values yet (the allocator has no capability model).
+    # multi_sim.launch.py reads them. Use robot_types:=standard there to run two standard robots.
+    robot_type.forklift_1: high_lift
+    robot_type.forklift_2: mecanum
     autostart: false
     # --- communication ---
     heartbeat_timeout: 5.0         # if there is no RobotStatus for this time -> the robot is not available

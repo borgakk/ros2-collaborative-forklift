@@ -1,0 +1,88 @@
+# Overlay for the fast Mecanum forklift (robot 2). It replaces whole sections of
+# forklift_params.yaml (xacro argument params_overlay; forklift.urdf.xacro) and gives the
+# navigation limits of this robot (section `navigation`, applied by robot.launch.py). All other
+# values (chassis, sensors, forks) come from the base file. SI units.
+#
+# Compared with the standard robot: 4 driven wheels (Mecanum), a higher speed, a very short
+# lift (just enough to carry a pallet and to put it on the 0.25 m storage platforms), a short
+# mast, a smaller rated load, and a blue body.
+#
+# Layout: 4 driven wheels at the corners, all the same size as the front wheels of the
+# differential robot. The 2 rear casters of the differential robot are not used.
+#
+#            +x (forks)
+#     FL  o-----------o  FR      y
+#         |           |         ^
+#         |  base_link|         |
+#         |  (axle)   |
+#     RL  o-----------o  RR
+#   x = -wheelbase     x = 0 (front axle = base_link)
+#
+# Rollers are NOT modelled. Each wheel is a sphere. The Gazebo contact has a friction
+# direction (fdir1) at 45 deg to the wheel plane: high friction (mu) along fdir1 and low
+# friction (mu2) along the roller axis. This is the method of the Gazebo mecanum demo
+# (gz-sim worlds/mecanum_drive.sdf). Limits: docs/robot_model.md (Mecanum section).
+
+drive_type: mecanum
+
+colors:
+  body: [0.10, 0.35, 0.85, 1.0]   # blue (the standard and the high-lift robot are orange)
+
+drive_wheel:
+  radius: 0.18
+  width: 0.12
+  separation: 0.80         # track width from center to center (left-right)
+  wheelbase: 1.00          # front axle to rear axle (the same as the rear casters of the diff robot)
+  mass: 30.0               # for each of the 4 wheels
+  max_velocity: 10.0       # rad/s  (approximately 1.8 m/s at the rim; standard robot: 6 rad/s)
+  max_effort: 400.0        # N*m
+
+mecanum:
+  mu: 1.0                  # friction along fdir1 (the wheel pushes the ground in this direction)
+  mu2: 0.0                 # friction along the roller axis (free rolling). 0 = no lateral grip
+
+mast:
+  x: 0.26
+  upright_y: 0.30
+  upright_size_x: 0.08
+  upright_size_y: 0.06
+  bottom_z: 0.17
+  height: 1.20             # short mast: max fork top 0.50 + 0.6 carriage + margin (standard: 2.15 m)
+  mass: 60.0
+
+lift:
+  min_height: 0.05
+  max_travel: 0.45         # fork top from 0.05 m to 0.50 m: enough for the 0.25 m platforms
+  initial_height: 0.02
+  max_velocity: 0.50       # m/s (standard robot: 0.20)
+  max_effort: 4000.0       # N: 1.5 x (carriage + forks + rated load) x g
+  rated_load: 150.0        # kg (standard robot: 500 kg)
+  damping: 200.0
+
+# The lift profile of the lift controller (the default is 0.15 m/s and 0.3 m/s^2).
+lift_controller:
+  lift_controller:
+    default_velocity: 0.40
+    max_acceleration: 0.8
+
+# Overrides for the Nav2 parameters of this robot (merged into nav2_params.yaml by
+# robot.launch.py: <node>: <parameter>: value). The standard robot has 0.4 m/s.
+# Reverse stays slow: only the rear LiDAR protects it. Braking: see test_robot_types.py.
+navigation:
+  controller_server:
+    FollowPath:
+      desired_linear_vel: 1.0
+      rotate_to_heading_angular_vel: 0.8
+      max_angular_accel: 1.2
+  behavior_server:
+    max_rotational_vel: 0.8
+    rotational_acc_lim: 1.2
+  velocity_smoother:
+    max_velocity: [1.0, 0.0, 0.8]
+    min_velocity: [-0.15, 0.0, -0.8]
+    max_accel: [0.8, 0.0, 1.2]
+    max_decel: [-1.0, 0.0, -1.2]
+
+# Footprint of this robot (file in forklift_navigation/config): the rear wheels are wider
+# than the rear casters of the other robots.
+navigation_footprints: footprints_mecanum.yaml

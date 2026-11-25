@@ -13,17 +13,23 @@
   Example:
     xacro forklift.urdf.xacro sim_backend:=mock > forklift.urdf
 -->
-<robot name="forklift" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<robot name="forklift" xmlns:xacro="http://www.ros.org/wiki/xacro" xmlns:gz="http://gazebosim.org/schema">
 
   <xacro:arg name="params_file" default=""/>
+  <!-- Optional YAML that replaces top-level sections of params_file (for example
+       config/forklift_mecanum.yaml). The robot types share one base file. The replacement is
+       per section, not per key: give a complete section (for example all of `drive_wheel`).-->
+  <xacro:arg name="params_overlay" default=""/>
   <xacro:arg name="sim_backend" default="mock"/>
   <xacro:arg name="ros2_control" default="true"/>
   <xacro:arg name="extensions" default=""/>
 
   <!-- Relative paths resolve from this file (xacro 2.1.1 does not support $(dirname)).
        Eager evaluation sets that resolution to this file. Give params_file as an absolute path.-->
-  <xacro:property name="params" lazy_eval="false"
+  <xacro:property name="base_params" lazy_eval="false"
                   value="${xacro.load_yaml('$(arg params_file)' or '../config/forklift_params.yaml')}"/>
+  <xacro:property name="params" lazy_eval="false"
+                  value="${dict(base_params, **xacro.load_yaml('$(arg params_overlay)')) if '$(arg params_overlay)' else base_params}"/>
 
   <xacro:include filename="forklift_body.xacro"/>
   <xacro:include filename="forklift_ros2_control.xacro"/>

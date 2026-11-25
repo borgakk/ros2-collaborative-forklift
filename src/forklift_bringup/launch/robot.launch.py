@@ -10,6 +10,13 @@ EKF, perception, navigation, load-handling skills and mission manager.
                            "forklift_1/<frame>". The Gazebo entity and topics are
                            "forklift_1". All robots share the `map` frame.
 
+  robot_type:=standard|high_lift|mecanum
+                           standard (default): the original differential robot. high_lift:
+                           differential, 2 m lift, tall mast (forklift_high_lift.yaml).
+                           mecanum: 4 driven wheels, fast, short lift (forklift_mecanum.yaml,
+                           controllers_mecanum.yaml, footprints_mecanum.yaml). Same xacro,
+                           same nodes. The `navigation` section of an overlay changes Nav2.
+
 sim.launch.py (one robot) and multi_sim.launch.py (two robots) use this file. There are no
 duplicate files for each robot. Each robot uses the same xacro, nodes and config files with
 a namespace. For a robot with a namespace, rewrite_params writes a temporary copy of each
@@ -66,6 +73,55 @@ def rewrite_params(path, namespace, prefix, out_dir):
         data = yaml.safe_load(f)
     data = {namespace: _rewrite(data, prefix)}
     out = os.path.join(out_dir, f'{namespace}_{os.path.basename(path)}')
+    with open(out, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+    return out
+
+
+# robot_type -> overlay file in forklift_description/config (None: the base parameters)
+ROBOT_TYPES = {'standard': None, 'high_lift': 'forklift_high_lift.yaml',
+               'mecanum': 'forklift_mecanum.yaml'}
+
+
+def robot_type_overlay(robot_type):
+    """Return (path, content) of the overlay of a robot type ('', {} for the standard robot)."""
+    if robot_type not in ROBOT_TYPES:
+        raise RuntimeError(f'robot_type must be one of {sorted(ROBOT_TYPES)}, got {robot_type!r}')
+    name = ROBOT_TYPES[robot_type]
+    if name is None:
+        return '', {}
+    path = share('forklift_description', 'config', name)
+    with open(path, encoding='utf-8') as f:
+        return path, yaml.safe_load(f)
+
+
+def deep_update(target, changes):
+    """Merge `changes` into `target` (nested dicts are merged, other values are replaced)."""
+    for key, value in changes.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            deep_update(target[key], value)
+        else:
+            target[key] = value
+
+
+def apply_navigation_overrides(root, overrides, footprint=None):
+    """
+    Apply `<node>: <parameter>: value` overrides of a robot type to the parameters of one robot.
+
+    Used for the `navigation` section (Nav2) and the `lift_controller` section of an overlay.
+    """
+    for node, values in (overrides or {}).items():
+        deep_update(root[node]['ros__parameters'], values)
+    if footprint is not None:
+        root['local_costmap']['local_costmap']['ros__parameters']['footprint'] = str(footprint)
+
+
+def patch_params(path, namespace, out_dir, edit):
+    """Write a copy of a parameter file after `edit(root_dict)` changed the node section."""
+    with open(path, encoding='utf-8') as f:
+        data = yaml.safe_load(f)
+    edit(data[namespace] if namespace else data)
+    out = os.path.join(out_dir, f'{namespace or "root"}_{os.path.basename(path)}')
     with open(out, 'w', encoding='utf-8') as f:
         yaml.safe_dump(data, f, sort_keys=False)
     return out
@@ -129,9 +185,13 @@ def robot(context):
 
     def params(pkg, name):
         return rewrite_params(share(pkg, 'config', name), ns, prefix, out_dir)
-    controllers = params('forklift_control', 'controllers.yaml')
+    overlay_path, overlay = robot_type_overlay(arg('robot_type'))
+    mecanum = overlay.get('drive_type', 'diff') == 'mecanum'
+    controllers = params('forklift_control',
+                         'controllers_mecanum.yaml' if mecanum else 'controllers.yaml')
     if ns:
-        # diff_drive_controller adds the namespace prefix to its frames a second time
+        # The base controller (diff or mecanum) adds the namespace prefix to its frames a
+        # second time
         with open(controllers, encoding='utf-8') as f:
             data = yaml.safe_load(f)
         data[ns]['forklift_base_controller']['ros__parameters']['tf_frame_prefix_enable'] = \
@@ -140,6 +200,21 @@ def robot(context):
             yaml.safe_dump(data, f, sort_keys=False)
     xacro_args = [f'controllers_file:={controllers}', f'robot_name:={robot_name}',
                   f'frame_prefix:={prefix}', f'ros_namespace:={"/" + ns if ns else ""}']
+    if overlay_path:
+        xacro_args.append(f'params_overlay:={overlay_path}')
+    # The two base controllers have different topic names for the command and the odometry.
+    base_cmd_topic = 'forklift_base_controller/' + ('reference' if mecanum else 'cmd_vel')
+    odom_topic = 'forklift_base_controller/' + ('odometry' if mecanum else 'odom')
+    ekf_file = params('forklift_localization', 'ekf.yaml')
+    lift_file = params('forklift_control', 'lift_controller.yaml')
+    if overlay.get('lift_controller'):
+        lift_file = patch_params(lift_file, ns, out_dir, lambda root: apply_navigation_overrides(
+            root, overlay['lift_controller']))
+    if mecanum:
+        # (relative name in a namespace, absolute name at the root)
+        ekf_file = patch_params(ekf_file, ns, out_dir, lambda root: root[
+            'ekf_filter_node']['ros__parameters'].update(
+            odom0=odom_topic if ns else '/' + odom_topic))
     navigation_mode = arg('mode')
     sim = {'use_sim_time': True}
     actions = [
@@ -159,11 +234,11 @@ def robot(context):
                 controller_manager=f'/{prefix}controller_manager',
                 controllers_file=controllers,
                 twist_mux_file=params('forklift_control', 'twist_mux.yaml'),
-                lift_file=params('forklift_control', 'lift_controller.yaml'),
+                lift_file=lift_file,
                 rear_safety_file=params('forklift_control', 'rear_safety.yaml'),
-                frame_prefix=prefix),
+                frame_prefix=prefix, base_cmd_topic=base_cmd_topic),
         include('forklift_localization', 'ekf.launch.py', use_sim_time='true',
-                ekf_file=params('forklift_localization', 'ekf.yaml')),
+                ekf_file=ekf_file),
     ]
     if arg('perception').lower() == 'true':
         actions.append(include('forklift_perception', 'perception.launch.py',
@@ -173,11 +248,23 @@ def robot(context):
     peers = [p for p in arg('fleet_peers').split(',') if p.strip()]
     if navigation_mode != 'none':
         nav2_params = params('forklift_navigation', 'nav2_params.yaml')
+        footprints_name = overlay.get('navigation_footprints', 'footprints.yaml')
+        footprints_file = share('forklift_navigation', 'config', footprints_name)
+        footprint = None
+        if footprints_name != 'footprints.yaml':
+            with open(footprints_file, encoding='utf-8') as f:
+                footprint = yaml.safe_load(f)['footprints']['unloaded']
+        if overlay.get('navigation') or footprint is not None:
+            nav2_params = patch_params(
+                nav2_params, ns, out_dir,
+                lambda root: apply_navigation_overrides(root, overlay.get('navigation'),
+                                                        footprint))
         if fleet:
             nav2_params = add_peer_obstacles(nav2_params, ns, out_dir)
         actions.append(include('forklift_navigation', 'navigation.launch.py',
                                mode=navigation_mode, x=arg('x'), y=arg('y'), yaw=arg('yaw'),
-                               frame_prefix=prefix, params_file=nav2_params))
+                               frame_prefix=prefix, params_file=nav2_params,
+                               footprints_file=footprints_file))
         actions.append(Node(
             package='forklift_control', executable='load_handler', output='screen',
             parameters=[params('forklift_control', 'load_handler.yaml'), sim,
@@ -207,6 +294,8 @@ def generate_launch_description():
         DeclareLaunchArgument('yaw', default_value='0.0'),
         DeclareLaunchArgument('mode', default_value='navigation',
                               description='navigation | mapping | none'),
+        DeclareLaunchArgument('robot_type', default_value='standard',
+                              description='standard | high_lift | mecanum (see the docstring)'),
         DeclareLaunchArgument('perception', default_value='true'),
         DeclareLaunchArgument('mission_manager', default_value='true'),
         DeclareLaunchArgument('start_mission', default_value='false'),

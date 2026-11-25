@@ -15,6 +15,9 @@ if(BUILD_TESTING)
   ament_add_pytest_test(test_simulation_assets test/test_simulation_assets.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     TIMEOUT 120)
+  ament_add_pytest_test(test_mecanum_assets test/test_mecanum_assets.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    TIMEOUT 120)
   ament_add_pytest_test(test_load_models test/test_load_models.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     TIMEOUT 120)

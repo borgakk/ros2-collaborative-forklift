@@ -22,6 +22,12 @@
     <xacro:property name="og" value="${p['overhead_guard']}"/>
     <xacro:property name="dw" value="${p['drive_wheel']}"/>
     <xacro:property name="cs" value="${p['caster']}"/>
+    <!-- drive_type: 'diff' (2 driven front wheels + 2 rear casters, default) or 'mecanum'
+         (4 driven wheels of the same size at the corners). See config/forklift_mecanum.yaml.-->
+    <xacro:property name="drive_type" value="${p.get('drive_type', 'diff')}"/>
+    <xacro:unless value="${drive_type in ['diff', 'mecanum']}">
+      <xacro:element xacro:name="${xacro.fatal('drive_type must be diff or mecanum, got: ' + str(drive_type))}"/>
+    </xacro:unless>
     <xacro:property name="ms" value="${p['mast']}"/>
     <xacro:property name="cg" value="${p['carriage']}"/>
     <xacro:property name="fk" value="${p['forks']}"/>
@@ -30,7 +36,9 @@
     <!-- z of the ground plane in base_link-->
     <xacro:property name="g" value="${-dw['radius']}"/>
 
-    <material name="forklift_orange"><color rgba="0.95 0.55 0.05 1"/></material>
+    <!-- Body color: `colors: {body: [r, g, b, a]}` in a robot type overlay (default: orange)-->
+    <xacro:property name="body_rgba" value="${' '.join([str(c) for c in p.get('colors', dict()).get('body', [0.95, 0.55, 0.05, 1])])}"/>
+    <material name="forklift_orange"><color rgba="${body_rgba}"/></material>
     <material name="steel_dark"><color rgba="0.20 0.20 0.22 1"/></material>
     <material name="steel"><color rgba="0.55 0.55 0.58 1"/></material>
     <material name="rubber"><color rgba="0.05 0.05 0.05 1"/></material>
@@ -123,16 +131,17 @@
 
     <!-- ===================== Wheels ===================== -->
     <!-- Driven front wheels: continuous joints about +y (positive rotation moves the robot forward).-->
-    <xacro:macro name="drive_wheel" params="side y_sign">
-      <joint name="${side}_drive_wheel_joint" type="continuous">
+    <!-- name: link and joint prefix. x, y: position of the wheel axis in base_link.-->
+    <xacro:macro name="drive_wheel" params="name x y">
+      <joint name="${name}_joint" type="continuous">
         <parent link="base_link"/>
-        <child link="${side}_drive_wheel_link"/>
-        <origin xyz="0 ${y_sign * dw['separation'] / 2.0} 0" rpy="0 0 0"/>
+        <child link="${name}_link"/>
+        <origin xyz="${x} ${y} 0" rpy="0 0 0"/>
         <axis xyz="0 1 0"/>
         <limit effort="${dw['max_effort']}" velocity="${dw['max_velocity']}"/>
         <dynamics damping="0.1" friction="0.0"/>
       </joint>
-      <link name="${side}_drive_wheel_link">
+      <link name="${name}_link">
         <visual>
           <origin xyz="0 0 0" rpy="${pi / 2} 0 0"/>
           <geometry><cylinder radius="${dw['radius']}" length="${dw['width']}"/></geometry>
@@ -149,8 +158,20 @@
         </xacro:cylinder_y_inertial>
       </link>
     </xacro:macro>
-    <xacro:drive_wheel side="left" y_sign="1"/>
-    <xacro:drive_wheel side="right" y_sign="-1"/>
+    <xacro:property name="half_track" value="${dw['separation'] / 2.0}"/>
+    <xacro:if value="${drive_type == 'diff'}">
+      <xacro:drive_wheel name="left_drive_wheel" x="0" y="${half_track}"/>
+      <xacro:drive_wheel name="right_drive_wheel" x="0" y="${-half_track}"/>
+    </xacro:if>
+    <!-- Mecanum: the 2 rear wheels are the same large wheels as the front wheels (x = -wheelbase).
+         The rollers are not modelled. The Gazebo extension gives each wheel contact an
+         anisotropic friction that has the roller direction (forklift_gazebo.xacro).-->
+    <xacro:if value="${drive_type == 'mecanum'}">
+      <xacro:drive_wheel name="front_left_drive_wheel" x="0" y="${half_track}"/>
+      <xacro:drive_wheel name="front_right_drive_wheel" x="0" y="${-half_track}"/>
+      <xacro:drive_wheel name="rear_left_drive_wheel" x="${-dw['wheelbase']}" y="${half_track}"/>
+      <xacro:drive_wheel name="rear_right_drive_wheel" x="${-dw['wheelbase']}" y="${-half_track}"/>
+    </xacro:if>
 
     <!-- Rear support wheels. They are fixed spheres. The simulator layer gives them
          almost zero friction. Thus, they operate as free casters without swivel-joint jitter.-->
@@ -173,8 +194,10 @@
         </xacro:sphere_inertial>
       </link>
     </xacro:macro>
-    <xacro:caster side="left" y_sign="1"/>
-    <xacro:caster side="right" y_sign="-1"/>
+    <xacro:if value="${drive_type == 'diff'}">
+      <xacro:caster side="left" y_sign="1"/>
+      <xacro:caster side="right" y_sign="-1"/>
+    </xacro:if>
 
     <!-- ===================== Mast ===================== -->
     <xacro:property name="upright_len" value="${ms['height'] - ms['bottom_z']}"/>

@@ -1,0 +1,79 @@
+# ros2_control controllers for the Mecanum forklift (drive_type: mecanum).
+# This file is the same as controllers.yaml, except for the base controller. The lift
+# sections must stay equal to controllers.yaml (test/test_config_consistency.py checks this).
+# The wheel geometry must agree with forklift_description/config/forklift_mecanum.yaml.
+#
+# Interfaces of the base controller (it has the same name as the differential one, thus the
+# launch files and tests that wait for `forklift_base_controller` do not change):
+#   command   ~/reference  (geometry_msgs/TwistStamped: linear.x, linear.y, angular.z)
+#   odometry  ~/odometry   (nav_msgs/Odometry); the EKF publishes odom -> base_footprint
+
+controller_manager:
+  ros__parameters:
+    update_rate: 50  # Hz
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    forklift_base_controller:
+      type: mecanum_drive_controller/MecanumDriveController
+
+    fork_lift_controller:
+      type: joint_trajectory_controller/JointTrajectoryController
+
+forklift_base_controller:
+  ros__parameters:
+    front_left_wheel_command_joint_name: "front_left_drive_wheel_joint"
+    front_right_wheel_command_joint_name: "front_right_drive_wheel_joint"
+    rear_left_wheel_command_joint_name: "rear_left_drive_wheel_joint"
+    rear_right_wheel_command_joint_name: "rear_right_drive_wheel_joint"
+    front_left_wheel_state_joint_name: "front_left_drive_wheel_joint"
+    front_right_wheel_state_joint_name: "front_right_drive_wheel_joint"
+    rear_left_wheel_state_joint_name: "rear_left_drive_wheel_joint"
+    rear_right_wheel_state_joint_name: "rear_right_drive_wheel_joint"
+
+    kinematics:
+      wheels_radius: 0.18
+      # (wheelbase + track) / 2 = (1.00 + 0.80) / 2: the distance of the wheels to the center of
+      # the wheel rectangle, projected on x and y (lx + ly).
+      sum_of_robot_center_projection_on_X_Y_axis: 0.9
+      # base_footprint is above the front axle. The wheel rectangle has its center 0.5 m behind it.
+      base_frame_offset:
+        x: 0.5
+        y: 0.0
+        theta: 0.0
+
+    reference_timeout: 0.5      # s; if a command is older than this, the robot stops (dead-man)
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    enable_odom_tf: false       # the EKF (forklift_localization) publishes odom -> base_footprint
+
+    # Encoder odometry: high confidence in vx, vy and yaw rate. The other components are not used.
+    pose_covariance_diagonal: [0.001, 0.001, 1000000.0, 1000000.0, 1000000.0, 0.01]
+    twist_covariance_diagonal: [0.0025, 0.0025, 1000000.0, 1000000.0, 1000000.0, 0.01]
+
+    # Hard limits of the actuators (wheel limit: 10 rad/s x 0.18 m = 1.8 m/s). Navigation applies
+    # smaller limits (forklift_description/config/forklift_mecanum.yaml, section navigation).
+    linear.x.max_velocity: 1.5
+    linear.x.min_velocity: -0.5
+    linear.x.max_acceleration: 1.0
+    linear.y.max_velocity: 1.0
+    linear.y.min_velocity: -1.0
+    linear.y.max_acceleration: 1.0
+    angular.z.max_velocity: 1.2
+    angular.z.min_velocity: -1.2
+    angular.z.max_acceleration: 1.5
+
+# Lift: the same as controllers.yaml.
+fork_lift_controller:
+  ros__parameters:
+    joints: ["fork_lift_joint"]
+    command_interfaces: ["velocity"]
+    state_interfaces: ["position", "velocity"]
+    allow_nonzero_velocity_at_trajectory_end: false
+    gains:
+      fork_lift_joint: {p: 2.0, i: 0.0, d: 0.0, ff_velocity_scale: 1.0}
+    constraints:
+      stopped_velocity_tolerance: 0.01
+      goal_time: 1.0
+      fork_lift_joint: {trajectory: 0.0, goal: 0.01}

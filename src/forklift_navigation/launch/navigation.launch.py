@@ -25,7 +25,7 @@ def generate_launch_description():
     pkg = FindPackageShare('forklift_navigation')
     params = LaunchConfiguration('params_file')
     prefix = LaunchConfiguration('frame_prefix')
-    footprints = PathJoinSubstitution([pkg, 'config', 'footprints.yaml'])
+    footprints = LaunchConfiguration('footprints_file')
     mode = LaunchConfiguration('mode')
     is_nav = IfCondition(PythonExpression(["'", mode, "' == 'navigation'"]))
     is_map = IfCondition(PythonExpression(["'", mode, "' == 'mapping'"]))
@@ -101,6 +101,9 @@ def generate_launch_description():
             [pkg, 'config', 'nav2_params.yaml']),
             description='Nav2 parameters (namespace-rewritten copy for a namespaced robot)'),
         DeclareLaunchArgument('frame_prefix', default_value=''),
+        DeclareLaunchArgument('footprints_file', default_value=PathJoinSubstitution(
+            [FindPackageShare('forklift_navigation'), 'config', 'footprints.yaml']),
+            description='loaded/unloaded footprints of this robot type'),
         DeclareLaunchArgument('mode', default_value='navigation',
                               description='navigation | mapping'),
         DeclareLaunchArgument('nav', default_value='false',

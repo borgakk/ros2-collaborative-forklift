@@ -93,29 +93,30 @@ controller_server:
       movement_time_allowance: 15.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.08
-      yaw_goal_tolerance: 0.06     # rad (3.4 deg); the camera approach corrects the remaining error
+      xy_goal_tolerance: 0.15      # the staging pose does not need to be exact: the camera approach
+      yaw_goal_tolerance: 0.15     # rad (8.6 deg) corrects it. (Was 0.08 m / 0.06 rad; the tight goal
+                                   # made the robot creep and turn for seconds. Handler limit: 0.25 m / 10 deg)
       stateful: true
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.4
+      desired_linear_vel: 0.8            # was 0.4 (too slow for the warehouse); limit of braking: 0.5 m/s^2
       lookahead_dist: 0.8
       min_lookahead_dist: 0.5
-      max_lookahead_dist: 1.2
+      max_lookahead_dist: 1.5
       lookahead_time: 1.5
-      use_velocity_scaled_lookahead_dist: false
+      use_velocity_scaled_lookahead_dist: true
       transform_tolerance: 0.2
-      min_approach_linear_velocity: 0.08
-      approach_velocity_scaling_dist: 0.8
+      min_approach_linear_velocity: 0.2
+      approach_velocity_scaling_dist: 0.8   # the robot brakes at 0.5 m/s^2 from 0.8 m/s: 0.64 m
       use_collision_detection: true      # full footprint (with the forks) along the path
       max_allowed_time_to_collision_up_to_carrot: 1.5
       use_regulated_linear_velocity_scaling: true
       use_cost_regulated_linear_velocity_scaling: false
       regulated_linear_scaling_min_radius: 0.9
-      regulated_linear_scaling_min_speed: 0.15
+      regulated_linear_scaling_min_speed: 0.25
       use_fixed_curvature_lookahead: false
       use_rotate_to_heading: true        # turn in place first (differential drive), then move
-      rotate_to_heading_angular_vel: 0.5
+      rotate_to_heading_angular_vel: 0.4  # 0.8 overshot the goal heading (drive lag): repeated corrections
       rotate_to_heading_min_angle: 0.6
       max_angular_accel: 0.8
       allow_reversing: false             # the LiDAR does not see the rear of the robot
@@ -280,9 +281,9 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.4, 0.0, 0.5]
+    max_velocity: [0.8, 0.0, 0.5]
     min_velocity: [-0.15, 0.0, -0.5]
-    max_accel: [0.4, 0.0, 0.8]
+    max_accel: [0.8, 0.0, 0.8]
     max_decel: [-0.5, 0.0, -0.8]
     odom_topic: /odometry/filtered
     odom_duration: 0.1

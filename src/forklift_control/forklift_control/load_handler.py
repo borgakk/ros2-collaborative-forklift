@@ -19,11 +19,12 @@ import math
 import signal
 
 from forklift_control.load_handling_logic import (approach_command, ApproachGains,
-                                                  docking_pose, fork_heights, is_aligned,
-                                                  line_errors, load_pose_from_qr,
+                                                  docking_pose, fork_heights, holonomic_command,
+                                                  is_aligned, line_errors, load_pose_from_qr,
                                                   load_supported, nominal_load_in_base,
                                                   placement_poses, plausible_load_in_base,
-                                                  Pose2D, RobustTarget)
+                                                  Pose2D, RobustTarget, strafe_command,
+                                                  turn_command)
 from forklift_interfaces.action import PickupLoad, PlaceLoad, SetForkHeight
 from forklift_interfaces.msg import ForkState, QrDetectionArray, SafetyStatus
 from forklift_task_manager.mission_config import default_mission_path, load_mission
@@ -40,6 +41,7 @@ from rclpy.qos import qos_profile_sensor_data
 from rclpy.task import Future
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import String
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
 
@@ -88,9 +90,26 @@ class LoadHandler(Node):
         self.face_tol = p('platform_face_tolerance', 0.12)
         self.platform_reach = p('platform_reach', 0.30)
         self.platform_face_margin = p('platform_face_margin', 0.04)
-        self.approach_gains = ApproachGains(max_speed=p('approach_speed', 0.12))
-        self.insert_gains = ApproachGains(max_speed=p('insert_speed', 0.06))
-        self.reverse_gains = ApproachGains(max_speed=p('reverse_speed', 0.06))
+        decel = p('dock_decel', 0.4)
+        strafe = p('approach_strafe_speed', 0.30)
+        self.approach_gains = ApproachGains(max_speed=p('approach_speed', 0.12), decel=decel,
+                                            max_strafe=strafe)
+        # The fork tips reach the pallet after pre_insert_tip_gap. The entry zone adds the length
+        # of the pocket entrance.
+        self.insert_gains = ApproachGains(
+            max_speed=p('insert_speed', 0.06), decel=decel, entry_speed=p('entry_speed', 0.15),
+            max_strafe=p('insert_strafe_speed', 0.04),
+            lateral_gain=p('insert_lateral_gain', 0.0),
+            entry_length=self.pre_insert_tip_gap + p('entry_zone_length', 0.20))
+        self.reverse_gains = ApproachGains(max_speed=p('reverse_speed', 0.06), decel=decel,
+                                           max_strafe=strafe)
+        self.turn_max_angular = p('turn_speed', 0.4)
+        # Robots that can move sideways (Mecanum) remove the lateral error with a sideways speed.
+        self.holonomic = p('holonomic', False)
+        self.strafe_speed = p('strafe_speed', 0.10)
+        self.stationary_time = p('stationary_time', 0.5)
+        self.align_settle = p('align_settle_time', 0.3)
+        self.align_samples = p('align_samples', 6)
         self.align_retries = p('alignment_retries', 2)
         self.retry_backoff = p('retry_backoff', 0.4)
         self.detect_timeout = p('detection_timeout', 8.0)
@@ -99,6 +118,7 @@ class LoadHandler(Node):
         self.stall_time = p('stall_time', 2.0)
         self.lift_timeout = p('lift_timeout', 30.0)
         self.settle_time = p('load_settle_time', 1.0)
+        self.measure_time = p('load_measure_time', 1.0)
         self.load_low, self.load_high = p('load_low_fraction', 0.5), p('load_high_fraction', 2.0)
         self.release_max_kg = p('release_max_kg', 5.0)
         self.verify_timeout = p('verify_timeout', 8.0)
@@ -127,6 +147,7 @@ class LoadHandler(Node):
                                  lambda m: setattr(self, 'rear', (self.now(), m)), 10)
         self.create_subscription(LaserScan, 'scan', lambda m: setattr(self, 'scan', m),
                                  qos_profile_sensor_data)
+        self.create_subscription(String, 'handling/prepare', self._on_prepare, 10)
         self.create_subscription(QrDetectionArray, 'perception/qr_detections',
                                  self._on_detections, 10)
         self.cmd_pub = self.create_publisher(TwistStamped, 'cmd_vel/approach', 10)
@@ -174,11 +195,12 @@ class LoadHandler(Node):
         msg.header.frame_id = self.base_frame
         self.cmd_pub.publish(msg)
 
-    def drive(self, v, w):
+    def drive(self, v, w, vy=0.0):
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.base_frame
         msg.twist.linear.x, msg.twist.angular.z = float(v), float(w)
+        msg.twist.linear.y = float(vy)
         self.cmd_pub.publish(msg)
 
     def pose_in(self, frame):
@@ -207,9 +229,9 @@ class LoadHandler(Node):
             self.check_cancel(goal_handle)
             if self.odom is not None:
                 t = self.odom.twist.twist
-                if abs(t.linear.x) < 0.02 and abs(t.angular.z) < 0.02:
+                if abs(t.linear.x) < 0.02 and abs(t.linear.y) < 0.02 and abs(t.angular.z) < 0.02:
                     still_since = still_since or self.now()
-                    if self.now() - still_since >= 0.5:
+                    if self.now() - still_since >= self.stationary_time:
                         return
                 else:
                     still_since = None
@@ -217,15 +239,18 @@ class LoadHandler(Node):
             await self.tick()
         raise HandlingFailure('NOT_STATIONARY', 'robot did not come to rest')
 
-    async def set_fork(self, height, goal_handle):
+    async def start_fork(self, height):
+        """Send a lift goal and return at once. finish_fork() waits for the result."""
         if not self.lift.wait_for_server(timeout_sec=5.0):
             raise HandlingFailure('LIFT_FAILED', 'lift action server unavailable')
         send = self.lift.send_goal_async(SetForkHeight.Goal(height=float(height)))
         handle = await send
         if not handle.accepted:
             raise HandlingFailure('LIFT_FAILED', f'lift rejected height {height:.3f} m')
-        result_future = handle.get_result_async()
-        deadline = self.now() + self.lift_timeout
+        return handle, handle.get_result_async(), self.now() + self.lift_timeout, height
+
+    async def finish_fork(self, move, goal_handle):
+        handle, result_future, deadline, height = move
         while not result_future.done():
             if goal_handle.is_cancel_requested:
                 await handle.cancel_goal_async()
@@ -238,6 +263,36 @@ class LoadHandler(Node):
         if not result.success:
             raise HandlingFailure('LIFT_FAILED',
                                   f'lift to {height:.3f} m failed: {result.message}')
+
+    def fork_is_at(self, height, tolerance=0.003):
+        """Return True if the forks stand at `height` (for example, after the pre-positioning)."""
+        f = self.fork
+        return (f is not None and not f.moving and not f.fault and
+                abs(f.height - height) <= tolerance)
+
+    async def set_fork(self, height, goal_handle):
+        if self.fork_is_at(height):
+            return                  # a new goal takes about a second even if nothing moves
+        await self.finish_fork(await self.start_fork(height), goal_handle)
+
+    def _on_prepare(self, msg):
+        """
+        Move the forks while the mission manager navigates (the robot does not wait for the lift).
+
+        'pickup': forks to the insertion height (if empty). 'place:<destination>': forks to the
+        raised placement height (if a load is on them). Nobody waits for the result. The skill
+        sends the same height later: its goal replaces this one and returns when it is reached.
+        """
+        if self.busy or self.fork is None or not self.lift.server_is_ready():
+            return
+        kind, _, dest_id = msg.data.partition(':')
+        if kind == 'pickup' and not self.fork.load_detected:
+            height = self.heights().insert
+        elif kind == 'place' and self.fork.load_detected and dest_id in self.mission.destinations:
+            height = self.heights(self.mission.destinations[dest_id].surface_height).place_raised
+        else:
+            return
+        self.lift.send_goal_async(SetForkHeight.Goal(height=float(height)))
 
     async def ensure_at_staging(self, goal_handle, staging):
         """
@@ -390,7 +445,10 @@ class LoadHandler(Node):
             if err.remaining <= 0.005:
                 self.stop()
                 return err
-            v, w = approach_command(err, gains, reverse)
+            if self.holonomic:
+                v, vy, w = holonomic_command(err, gains, reverse, dist - err.remaining)
+            else:
+                (v, w), vy = approach_command(err, gains, reverse, dist - err.remaining), 0.0
             rear = self.rear_state() if reverse else 'CLEAR'
             if rear in ('STOP', 'FAULT'):
                 # If an obstacle blocks the rear, wait (the safety filter holds the robot). Do not
@@ -416,7 +474,7 @@ class LoadHandler(Node):
                 self.get_logger().info(f'{phase}: rear path clear after '
                                        f'{self.now() - blocked_since:.1f} s; continuing')
                 blocked_since = None
-            self.drive(v, w)
+            self.drive(v, w, vy)
             if rear == 'SLOW':
                 stalled_since = None             # the speed is low on purpose; this is not a stall
             elif stall_check and self.odom is not None:
@@ -435,6 +493,51 @@ class LoadHandler(Node):
                 feedback_due = self.now() + 0.2
                 self.publish_feedback(goal_handle, phase, err)
             await self.tick()
+
+    async def measure_alignment(self, target, box):
+        """Wait briefly, add detections while the robot is stationary, return the line errors."""
+        await self.sleep(self.align_settle)
+        for _ in range(self.align_samples):
+            self.refine(target, box)
+            await self.tick()
+        return line_errors(self.pose_in(self.odom_frame),
+                           docking_pose(target.estimate(), self.dock_standoff()))
+
+    async def fine_align(self, goal_handle, line_fn, lateral_tol, heading_tol):
+        """
+        Remove the small remaining errors in place. The robot does not move along the line.
+
+        It turns about base_footprint until the heading to the line is within heading_tol. A robot
+        that can move sideways also removes the lateral error. A differential robot cannot do this.
+        """
+        deadline = self.now() + 6.0
+        while self.now() < deadline:
+            self.check_cancel(goal_handle)
+            err = line_errors(self.pose_in(self.odom_frame), line_fn())
+            turn = abs(err.heading) > heading_tol
+            side = self.holonomic and abs(err.lateral) > lateral_tol
+            if not turn and not side:
+                break
+            self.drive(0.0, turn_command(err, self.turn_max_angular) if turn else 0.0,
+                       strafe_command(err, self.strafe_speed) if side else 0.0)
+            await self.tick()
+        self.stop()
+        await self.require_stationary(goal_handle)
+
+    def needs_fine_align(self, err, diff_lateral_limit):
+        """
+        Return True if an in-place correction (not a back-off) removes the error.
+
+        A differential robot corrects only the heading: the lateral error must already be small
+        (diff_lateral_limit). A robot that moves sideways also corrects 15 cm of lateral error.
+        """
+        wrong_heading = abs(err.heading) > self.heading_tol
+        wrong_side = self.holonomic and abs(err.lateral) > self.lateral_tol
+        if not wrong_heading and not wrong_side:
+            return False
+        if self.holonomic:
+            return abs(err.lateral) <= 0.15 and abs(err.heading) <= math.radians(15.0)
+        return abs(err.lateral) <= diff_lateral_limit
 
     def rear_state(self):
         """Latest rear-safety state. If the report is missing or old, the state is FAULT."""
@@ -522,15 +625,19 @@ class LoadHandler(Node):
 
             for attempt in range(self.align_retries + 1):
                 await self.drive_to(goal_handle, 'align', refined_pre, self.approach_gains)
-                await self.sleep(0.5)
-                # new estimate while the robot is stationary
-                for _ in range(10):
-                    self.refine(target, box)
-                    await self.tick()
-                err = line_errors(self.pose_in(self.odom_frame),
-                                  docking_pose(target.estimate(), self.dock_standoff()))
+                err = await self.measure_alignment(target, box)
                 log.info(f'alignment attempt {attempt + 1}: lateral {err.lateral * 100:.1f} cm,'
                          f' heading {math.degrees(err.heading):.1f} deg')
+                if self.needs_fine_align(err, self.lateral_tol):
+                    # Only the heading is wrong (the usual case). Turn in place. A Mecanum robot
+                    # also moves sideways. A rearward move and a new approach would take about
+                    # ten seconds.
+                    await self.fine_align(
+                        goal_handle, lambda: docking_pose(target.estimate(), self.dock_standoff()),
+                        0.5 * self.lateral_tol, 0.5 * self.heading_tol)
+                    err = await self.measure_alignment(target, box)
+                    log.info(f'after the turn: lateral {err.lateral * 100:.1f} cm, '
+                             f'heading {math.degrees(err.heading):.1f} deg')
                 if is_aligned(err, self.lateral_tol, self.heading_tol):
                     break
                 if attempt == self.align_retries:
@@ -566,7 +673,7 @@ class LoadHandler(Node):
             await self.set_fork(h.transport, goal_handle)
             self.publish_feedback(goal_handle, 'verify_load')
             await self.sleep(self.settle_time)
-            load_kg = await self.measure_load(1.0)
+            load_kg = await self.measure_load(self.measure_time)
             result.measured_load_kg = load_kg
             if not load_supported(load_kg, self.mission.load.mass, self.load_low, self.load_high):
                 # Recoverable: lower the forks and move rearward with no load.
@@ -646,7 +753,7 @@ class LoadHandler(Node):
                                         self.pre_standoff() - self.dock_standoff())
 
             await self.drive_to(goal_handle, 'align', lambda: pre, self.approach_gains)
-            await self.sleep(0.5)
+            await self.sleep(self.align_settle)
             # Make sure that the platform is there: compare the LiDAR
             # range to its front face with the map.
             robot = self.pose_in(self.odom_frame)
@@ -657,6 +764,16 @@ class LoadHandler(Node):
                 raise HandlingFailure('DESTINATION_NOT_FOUND', f'platform face expected at '
                                       f'{expected:.2f} m, LiDAR reads {measured}')
             err = line_errors(robot, dock)
+            log.info(f'placement alignment: lateral {err.lateral * 100:.1f} cm, '
+                     f'heading {math.degrees(err.heading):.1f} deg')
+            if self.needs_fine_align(err, 2 * self.lateral_tol):
+                await self.fine_align(goal_handle, lambda: dock, 0.5 * self.lateral_tol,
+                                      0.5 * self.heading_tol)
+                await self.sleep(self.align_settle)
+                robot = self.pose_in(self.odom_frame)
+                err = line_errors(robot, dock)
+                log.info(f'after the turn: lateral {err.lateral * 100:.1f} cm, '
+                         f'heading {math.degrees(err.heading):.1f} deg')
             if not is_aligned(err, 2 * self.lateral_tol, 2 * self.heading_tol):
                 raise HandlingFailure('ALIGNMENT_FAILED', f'lateral {err.lateral * 100:.1f} cm, '
                                       f'heading {math.degrees(err.heading):.1f} deg')
@@ -676,11 +793,14 @@ class LoadHandler(Node):
             await self.drive_to(goal_handle, 'insert', lambda: dock, self.insert_gains,
                                 stall_check=True)
             await self.require_stationary(goal_handle)
+            end = line_errors(self.pose_in(self.odom_frame), dock)
+            log.info(f'placement insertion ended: lateral {end.lateral * 100:.1f} cm, heading '
+                     f'{math.degrees(end.heading):.1f} deg, {end.remaining * 100:+.1f} cm to go')
 
             self.publish_feedback(goal_handle, 'lower')
             await self.set_fork(h.release, goal_handle)
             await self.sleep(self.settle_time)
-            load_kg = await self.measure_load(1.0)
+            load_kg = await self.measure_load(self.measure_time)
             if load_kg > self.release_max_kg:
                 await self.set_fork(h.place_raised, goal_handle)       # continue to hold it
                 raise HandlingFailure('PLACEMENT_NOT_VERIFIED', f'{load_kg:.1f} kg still on the '
@@ -694,19 +814,21 @@ class LoadHandler(Node):
             await self.drive_to(goal_handle, 'retract', lambda: staging, self.reverse_gains,
                                 reverse=True, stall_check=True)
             # The forks must come out with no load (the robot would pull a caught pallet).
-            after_kg = await self.measure_load(1.0)
+            after_kg = await self.measure_load(self.measure_time)
             if after_kg > self.release_max_kg:
                 raise HandlingFailure('PLACEMENT_NOT_VERIFIED', f'{after_kg:.1f} kg on the '
                                       'forks after retracting: the load came back with them')
             # Park at the insertion height (the next pickup starts there). Do not park on the lower
             # hard stop of the lift. In Gazebo, if the joint is on its limit while the robot moves,
             # the joint stays there and the next lift has a timeout (docs/gazebo_setup.md).
-            await self.set_fork(h.insert, goal_handle)
+            lowering = await self.start_fork(h.insert)
 
-            # Independent check: the camera must now see the box at its destination.
+            # Independent check: the camera must now see the box at its destination. The forks
+            # go down while the camera collects detections.
             self.publish_feedback(goal_handle, 'verify')
             self.detections = None
             target, _ = await self.identify_at_destination(box, goal_handle)
+            await self.finish_fork(lowering, goal_handle)
             seen = self.frame_transform('map', self.odom_frame).compose(target.estimate())
             result.placement_error = float(math.hypot(seen.x - dest.pose.x, seen.y - dest.pose.y))
             yaw_err = math.atan2(math.sin(seen.yaw - dest.pose.yaw),

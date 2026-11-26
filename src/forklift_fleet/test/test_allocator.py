@@ -1,7 +1,7 @@
 """Cost-based allocation: distances, sequence, penalties, stability."""
 
-from forklift_fleet.allocator import (AllocatorConfig, plan, RobotView, straight_route,
-                                      task_cost, TaskView)
+from forklift_fleet.allocator import (AllocatorConfig, can_carry, plan, RobotView,
+                                      straight_route, task_cost, TaskView, unassignable)
 from forklift_task_manager.mission_config import default_mission_path, load_mission
 import pytest
 
@@ -89,3 +89,75 @@ def test_route_function_is_used():
 def test_empty_inputs():
     assert plan([], tasks())[0] == {}
     assert plan(robots(), [])[0] == {'forklift_1': [], 'forklift_2': []}
+
+
+# ----------------------------------------------------------------- heterogeneous fleet
+
+def capable_robots():
+    """Return the two robot types: a slow high-lift robot and a fast low-lift robot."""
+    return [RobotView('forklift_1', -6.0, 0.0, speed=0.5, handling_time=46, max_load_kg=500,
+                      max_lift=2.0),
+            RobotView('forklift_2', 6.0, 0.0, speed=0.6, handling_time=37, max_load_kg=150,
+                      max_lift=0.45)]
+
+
+def test_a_heavy_task_goes_only_to_the_robot_with_the_capacity():
+    ts = tasks()
+    ts[0].mass_kg = 300.0                       # more than the 150 kg of forklift_2
+    assignment, _, _ = plan(capable_robots(), ts, cfg=CFG)
+    assert ts[0] in assignment['forklift_1']
+    assert ts[0] not in assignment['forklift_2']
+
+
+def test_a_high_placement_goes_only_to_the_robot_with_the_lift():
+    ts = tasks()
+    ts[1].lift_height = 1.2                     # forklift_2 lifts to 0.45 m
+    assignment, _, _ = plan(capable_robots(), ts, cfg=CFG)
+    assert ts[1] in assignment['forklift_1']
+
+
+def test_unassignable_lists_tasks_that_no_robot_can_do():
+    ts = tasks()
+    ts[2].mass_kg = 800.0                       # more than any robot
+    assert unassignable(capable_robots(), ts) == [ts[2]]
+    assert unassignable(capable_robots(), tasks()) == []
+    assert not can_carry(capable_robots()[1], ts[2])
+
+
+def test_a_task_without_a_capable_robot_does_not_break_the_plan():
+    ts = tasks()
+    ts[0].mass_kg = 800.0
+    assignment, makespan, total = plan(capable_robots(), ts, cfg=CFG)     # not planned: empty
+    assert assignment == {'forklift_1': [], 'forklift_2': []} and makespan == total == 0.0
+
+
+def test_the_cost_is_in_seconds_for_robots_with_a_speed():
+    ts = tasks()[0]
+    slow = RobotView('a', 0.0, 0.0, speed=0.5, handling_time=40.0)
+    fast = RobotView('b', 0.0, 0.0, speed=1.0, handling_time=20.0)
+    route = straight_route(CFG)
+    metres = route('a', (0.0, 0.0), ts.pickup) + route('a', ts.pickup, ts.drop)
+    assert task_cost(slow, ts, (0.0, 0.0), [], route, CFG) == pytest.approx(metres / 0.5 + 40.0)
+    assert task_cost(fast, ts, (0.0, 0.0), [], route, CFG) == pytest.approx(metres / 1.0 + 20.0)
+
+
+def test_a_robot_without_a_speed_keeps_the_cost_in_metres():
+    ts = tasks()[0]
+    r = RobotView('a', 0.0, 0.0, handling_time=99.0)      # speed 0: old behaviour
+    route = straight_route(CFG)
+    metres = route('a', (0.0, 0.0), ts.pickup) + route('a', ts.pickup, ts.drop)
+    assert task_cost(r, ts, (0.0, 0.0), [], route, CFG) == pytest.approx(metres)
+
+
+def test_the_faster_robot_takes_two_of_three_boxes_in_the_same_position():
+    robots_ = [RobotView('slow', 0.0, 0.0, speed=0.4, handling_time=60),
+               RobotView('fast', 0.0, 0.0, speed=0.8, handling_time=30)]
+    assignment, _, _ = plan(robots_, tasks(), cfg=CFG)
+    assert len(assignment['fast']) == 2 and len(assignment['slow']) == 1
+
+
+def test_a_slow_handling_time_moves_work_to_the_other_robot():
+    robots_ = [RobotView('a', 0.0, 0.0, speed=0.6, handling_time=300),
+               RobotView('b', 0.0, 0.0, speed=0.6, handling_time=20)]
+    assignment, _, _ = plan(robots_, tasks(), cfg=CFG)
+    assert len(assignment['b']) == 3 and assignment['a'] == []

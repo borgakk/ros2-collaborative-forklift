@@ -17,6 +17,13 @@ its current task) plus its remaining work. The selected plan has the smallest ma
 total of the robot with the most work). Then it has the smallest total cost. The units are
 metres of travel. The configuration gives the penalties in metres.
 
+Heterogeneous fleet. A robot with a `speed` (m/s) converts its routes to seconds and adds its
+`handling_time` (s for the pickup and the placement of one task). The penalties (in metres) become
+seconds with `penalty_speed`. Thus, a fast robot with a short lift and a slow robot with a high
+lift are compared in the same unit (time). A robot without `speed` keeps the cost in metres
+(the old behaviour). A robot can do a task only if the mass is within `max_load_kg` and the
+required fork height is within `max_lift`. `unassignable()` lists the tasks that no robot can do.
+
 The coordinator sends only the first task of the sequence of an idle robot. The other
 tasks stay RESERVED. The coordinator plans them again when a robot becomes free. Stability:
 the coordinator uses a plan that is different from the current reservations only if it is
@@ -39,6 +46,7 @@ class AllocatorConfig:
     congestion_radius: float = 3.5
     recovery_penalty: float = 5.0
     detour_factor: float = 1.3          # straight-line route length, if no plan is available
+    penalty_speed: float = 0.8          # m/s: penalties (m) -> s for robots with a speed
 
 
 @dataclass
@@ -51,6 +59,10 @@ class RobotView:
     ready_y: Optional[float] = None
     remaining: float = 0.0              # m of work that remain on its current task
     failures: int = 0
+    speed: float = 0.0                  # m/s, average travel speed; 0 = the cost is in metres
+    handling_time: float = 0.0          # s for the pickup and the placement of one task
+    max_load_kg: float = math.inf
+    max_lift: float = math.inf          # m, highest fork position
     # (x, y) places where it works or to which it goes
     targets: list = field(default_factory=list)
 
@@ -65,6 +77,8 @@ class TaskView:
     pickup: tuple                       # staging (x, y)
     drop: tuple                         # staging (x, y) at the destination
     reserved_for: str = ''
+    mass_kg: float = 0.0
+    lift_height: float = 0.0            # m, fork position that the placement needs
 
 
 def straight_route(cfg):
@@ -73,16 +87,29 @@ def straight_route(cfg):
     return route
 
 
+def can_carry(robot, task):
+    return task.mass_kg <= robot.max_load_kg and task.lift_height <= robot.max_lift
+
+
+def unassignable(robots, tasks):
+    """Return the tasks that no robot of `robots` can do (mass or lift height)."""
+    return [t for t in tasks if not any(can_carry(r, t) for r in robots)]
+
+
 def task_cost(robot, task, start, others, route, cfg):
-    c = route(robot.robot_id, start, task.pickup) + route(robot.robot_id, task.pickup, task.drop)
+    rid = robot.robot_id
+    travel = route(rid, start, task.pickup) + route(rid, task.pickup, task.drop)
+    penalty = cfg.recovery_penalty * robot.failures
     if task.reserved_for and task.reserved_for != robot.robot_id:
-        c += cfg.switch_penalty
+        penalty += cfg.switch_penalty
     for o in others:
         if any(math.hypot(t[0] - p[0], t[1] - p[1]) < cfg.congestion_radius
                for t in o.targets for p in (task.pickup, task.drop)):
-            c += cfg.congestion_penalty
+            penalty += cfg.congestion_penalty
             break
-    return c + cfg.recovery_penalty * robot.failures
+    if robot.speed > 0:
+        return travel / robot.speed + robot.handling_time + penalty / cfg.penalty_speed
+    return travel + penalty
 
 
 def sequence_cost(robot, tasks, robots, route, cfg):
@@ -106,6 +133,8 @@ def plan(robots, tasks, route=None, cfg=AllocatorConfig()):
     best = None
     ids = [r.robot_id for r in robots]
     for owners in itertools.product(range(len(robots)), repeat=len(tasks)):
+        if not all(can_carry(robots[o], t) for t, o in zip(tasks, owners)):
+            continue
         groups = [[t for t, o in zip(tasks, owners) if o == i] for i in range(len(robots))]
         seqs = []
         for i, g in enumerate(groups):
@@ -118,4 +147,6 @@ def plan(robots, tasks, route=None, cfg=AllocatorConfig()):
         key = (round(makespan, 6), round(total, 6), owners)
         if best is None or key < best[0]:
             best = (key, {ids[i]: s for i, (_, s) in enumerate(seqs)}, makespan, total)
+    if best is None:                    # no robot can do some task: use unassignable() first
+        return {r.robot_id: [] for r in robots}, 0.0, 0.0
     return best[1], best[2], best[3]

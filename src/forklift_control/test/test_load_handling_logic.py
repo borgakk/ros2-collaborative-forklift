@@ -156,3 +156,120 @@ def test_plausibility_rejects_impossible_load_poses():
     assert not plausible_load_in_base(Pose2D(0.70, 0.0, math.pi), 0.8, 0.05, 0.2, 0.04, 0.09)
     assert not plausible_load_in_base(Pose2D(0.8, 0.06, math.pi), 0.8, 0.05, 0.2, 0.04, 0.09)
     assert not plausible_load_in_base(Pose2D(0.8, 0.0, 0.0), 0.8, 0.05, 0.2, 0.04, 0.09)
+
+
+def test_speed_reaches_the_maximum_on_a_docking_segment():
+    """The old law (0.8 x remaining) never reached 0.25 m/s on 0.7 m; the braking profile does."""
+    g = ApproachGains(max_speed=0.25)
+    v, _ = approach_command(line_errors(Pose2D(-0.7, 0, 0), Pose2D(0, 0, 0)), g)
+    assert v == pytest.approx(0.25)
+
+
+def test_speed_decreases_monotonically_to_the_creep_speed():
+    g = ApproachGains(max_speed=0.5)
+    speeds = [approach_command(line_errors(Pose2D(-r / 100, 0, 0), Pose2D(0, 0, 0)), g)[0]
+              for r in range(100, 0, -1)]
+    assert all(a >= b for a, b in zip(speeds, speeds[1:]))
+    assert speeds[-1] == pytest.approx(g.min_speed)
+
+
+def test_braking_never_needs_more_than_the_configured_deceleration():
+    g = ApproachGains(max_speed=0.8, decel=0.4)
+    for r in (0.05, 0.1, 0.3, 0.6, 1.0):
+        v, _ = approach_command(line_errors(Pose2D(-r, 0, 0), Pose2D(0, 0, 0)), g)
+        # braking distance from v to the creep speed fits into the remaining distance
+        assert (v ** 2 - g.min_speed ** 2) / (2 * g.decel) <= r - g.creep_distance + 1e-9
+
+
+def test_a_docking_segment_is_fast():
+    """0.7 m at 0.25 m/s with the braking profile takes about 4 s (the old law took 15 s)."""
+    g = ApproachGains(max_speed=0.25)
+    x, t, dt = -0.7, 0.0, 0.05
+    while True:
+        v, _ = approach_command(line_errors(Pose2D(x, 0, 0), Pose2D(0, 0, 0)), g)
+        if line_errors(Pose2D(x, 0, 0), Pose2D(0, 0, 0)).remaining <= 0.005:
+            break
+        x += v * dt
+        t += dt
+        assert t < 20
+    assert t < 5.0, t
+
+
+def test_turn_command_turns_towards_the_line_and_is_limited():
+    from forklift_control.load_handling_logic import LineErrors, turn_command
+    assert turn_command(LineErrors(0.5, 0.0, math.radians(3)), 0.4) < 0      # robot yawed left
+    assert turn_command(LineErrors(0.5, 0.0, math.radians(-3)), 0.4) > 0
+    assert abs(turn_command(LineErrors(0.5, 0.0, math.radians(90)), 0.4)) == pytest.approx(0.4)
+    assert abs(turn_command(LineErrors(0.5, 0.0, math.radians(0.1)), 0.4)) >= 0.08  # no stall
+
+
+def test_entry_zone_limits_the_speed_at_the_start_of_the_insertion():
+    g = ApproachGains(max_speed=0.25, entry_length=0.3, entry_speed=0.15)
+    err = line_errors(Pose2D(-0.7, 0, 0), Pose2D(0, 0, 0))
+    assert approach_command(err, g, travelled=0.1)[0] == pytest.approx(0.15)
+    assert approach_command(err, g, travelled=0.31)[0] == pytest.approx(0.25)
+    assert approach_command(err, g)[0] == pytest.approx(0.25)       # no information: no limit
+
+
+def test_holonomic_command_strafes_instead_of_steering():
+    from forklift_control.load_handling_logic import holonomic_command
+    g = ApproachGains(max_speed=0.3, max_strafe=0.15)
+    # The robot is 5 cm to the left of the line and parallel to it: it moves forward and right.
+    vx, vy, w = holonomic_command(line_errors(Pose2D(-0.7, 0.05, 0), Pose2D(0, 0, 0)), g)
+    assert vx > 0 and vy < 0 and w == 0.0
+    assert abs(vy) <= g.max_strafe
+    # Reverse: the same lateral correction, rearward speed.
+    vx, vy, _ = holonomic_command(
+        line_errors(Pose2D(0.0, 0.05, 0), Pose2D(-1.0, 0, 0), reverse=True), g, reverse=True)
+    assert vx < 0 and vy < 0
+    # The heading is corrected with the angular speed (the robot yawed left: it turns right).
+    _, _, w = holonomic_command(line_errors(Pose2D(-0.7, 0, 0.1), Pose2D(0, 0, 0)), g)
+    assert w < 0
+    assert holonomic_command(line_errors(Pose2D(0.1, 0, 0), Pose2D(0, 0, 0)), g) == (0, 0, 0)
+
+
+@pytest.mark.parametrize('lateral,heading_deg', [(0.12, 0.0), (-0.12, 6.0), (0.15, -10.0)])
+def test_holonomic_approach_converges_on_the_line(lateral, heading_deg):
+    from forklift_control.load_handling_logic import holonomic_command
+    g = ApproachGains(max_speed=0.3, max_strafe=0.15, max_angular=0.8)
+    x, y, yaw, dt = -0.7, lateral, math.radians(heading_deg), 0.05
+    for _ in range(1500):
+        err = line_errors(Pose2D(x, y, yaw), Pose2D(0, 0, 0))
+        vx, vy, w = holonomic_command(err, g)
+        if vx == 0.0 and vy == 0.0:
+            break
+        x += (vx * math.cos(yaw) - vy * math.sin(yaw)) * dt
+        y += (vx * math.sin(yaw) + vy * math.cos(yaw)) * dt
+        yaw += w * dt
+    final = line_errors(Pose2D(x, y, yaw), Pose2D(0, 0, 0))
+    assert abs(final.remaining) < 0.02
+    assert is_aligned(final, 0.03, math.radians(2.0)), final
+
+
+def test_strafe_command_direction_and_limits():
+    from forklift_control.load_handling_logic import LineErrors, strafe_command
+    assert strafe_command(LineErrors(0.5, 0.04, 0.0), 0.1) < 0       # the robot is on the left
+    assert strafe_command(LineErrors(0.5, -0.04, 0.0), 0.1) > 0
+    assert abs(strafe_command(LineErrors(0.5, 0.5, 0.0), 0.1)) == pytest.approx(0.1)
+    assert abs(strafe_command(LineErrors(0.5, 0.001, 0.0), 0.1)) >= 0.03
+
+
+def test_insertion_does_not_steer_to_the_line_with_zero_lateral_gain():
+    """A small lateral error must not turn the robot (the fork tips are 1.38 m ahead)."""
+    g = ApproachGains(max_speed=0.25, lateral_gain=0.0)
+    _, w = approach_command(line_errors(Pose2D(-0.7, 0.02, 0.0), Pose2D(0, 0, 0)), g)
+    assert w == 0.0
+    # The heading error is still corrected.
+    _, w = approach_command(line_errors(Pose2D(-0.7, 0.02, 0.05), Pose2D(0, 0, 0)), g)
+    assert w < 0
+    # With the old gain the same lateral error gave a turn of about 5 degrees.
+    _, w_old = approach_command(line_errors(Pose2D(-0.7, 0.018, 0.0), Pose2D(0, 0, 0)),
+                                ApproachGains(max_speed=0.25))
+    assert abs(w_old) > 0.1
+
+
+def test_tip_swing_of_the_old_steering_law_exceeds_the_pocket_clearance():
+    """Heading the robot to atan(5 * lateral) moves the tips by more than the 0.10 m clearance."""
+    tip_offset = 1.38
+    swing = tip_offset * math.tan(math.atan(5.0 * 0.018))
+    assert swing > 0.10 - 0.03          # nearly all of the clearance (alignment error 3 cm)

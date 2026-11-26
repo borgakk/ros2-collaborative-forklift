@@ -86,6 +86,8 @@ def test_every_navigation_override_exists_in_the_nav2_parameters():
         params = NAV2[node]['ros__parameters']
 
         def check(section, reference, path):
+            if section.get('plugin', reference.get('plugin')) != reference.get('plugin'):
+                return          # another plugin: its parameters are not in the base file
             for key, value in section.items():
                 assert key in reference, f'{path}{key} is not in nav2_params.yaml'
                 if isinstance(value, dict):

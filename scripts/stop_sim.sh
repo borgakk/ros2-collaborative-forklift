@@ -13,6 +13,7 @@ patterns=(
   'forklift_control/lift_controller'
   'robot_localization/ekf_node'
   'rviz2/rviz2'
+  'install/forklift_'      # all nodes of this workspace (load_handler, mission_manager, fleet_*, ...)
 )
 for p in "${patterns[@]}"; do pkill -INT -f "$p" 2>/dev/null; done
 for _ in $(seq 1 50); do

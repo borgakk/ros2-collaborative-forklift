@@ -140,6 +140,18 @@ wins. The coordinator sends only the first task of each idle robot. The other ta
 RESERVED. The allocator makes a new plan each time that a robot becomes free. Thus one robot can
 get many sequential tasks. The switch penalty gives hysteresis against small cost changes.
 
+**Robot types (2026-11-26).** `fleet.yaml` gives each robot `speed` (m/s), `handling_time` (s for the
+pickup and the placement of one task), `max_load_kg` and `max_lift_height`. A robot with a speed
+converts its routes to seconds (`route / speed + handling_time`) and the penalties to seconds
+(`penalty_speed` 0.8 m/s). A robot can do a task only if the mass and the fork height (platform
+height + `lift_margin` 0.12 m) are in its limits. If no robot can do a task, the coordinator
+holds it (`HELD`, event "cannot be done by any robot") and the mission ends as `MISSION_FAILED`
+with this reason. `test_fleet_config.py` compares the limits with the robot-type overlays and the
+margin with the placement height of the load handler. `speed` and `handling_time` are estimates
+from the runs of 2026-11-26. For the 3-box mission, the result is the same as before (the faster
+Mecanum robot takes 2 boxes, 2:1 is the best split of 3 boxes between 2 robots). The model matters
+when the loads have different masses and heights.
+
 Route length: the straight line × 1.3 (detour factor). A request to the Nav2 planner of each
 robot would publish on its `plan` topic, and the conflict detector reads that topic. This is a
 known limitation.

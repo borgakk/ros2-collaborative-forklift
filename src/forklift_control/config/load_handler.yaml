@@ -33,18 +33,37 @@ load_handler:
                                      # pallet stopped about 4-7 cm short of its target)
     detection_timeout: 8.0
     min_detections: 5
-    # Speeds (m/s). Reverse motion is short and slow (the LiDAR cannot see the rear).
-    # The controller slows down near the target (speed = 0.8 x remaining distance), so these are
-    # the maximum speeds on the long part. (Original values: 0.12, 0.06, 0.06. The docking took
-    # about 85 % of the time of one box.) The rear LiDAR protects the reverse motion.
-    approach_speed: 0.30
-    insert_speed: 0.15
-    reverse_speed: 0.25
+    # Speeds (m/s) = the maximum speeds on the long part. The speed follows a braking profile
+    # (dock_decel, below the 0.5 m/s^2 of the drive controller) and the last 3 cm are a creep at
+    # 0.04 m/s. The robot types can override these values (`load_handler` section of the overlay in
+    # forklift_description/config). Reverse motion is limited again by the rear LiDAR.
+    # History (approach / insert / reverse): 0.12 / 0.06 / 0.06, then 0.30 / 0.15 / 0.25.
+    approach_speed: 0.40
+    insert_speed: 0.25
+    reverse_speed: 0.30
+    entry_speed: 0.15                # m/s while the fork tips enter the pocket (insertion start + zone)
+    entry_zone_length: 0.20          # m after the tips touch the pallet. At 0.25 m/s, the forks hit the
+                                     # pallet and pushed it by 20 cm (real pose, 2026-11-26).
+    dock_decel: 0.4
+    holonomic: false                 # true for robots that can move sideways (overlay of the robot type)
+    strafe_speed: 0.10               # m/s, in-place sideways correction (holonomic robots)
+    approach_strafe_speed: 0.30      # m/s, maximum sideways speed on the approach and the retreat
+    insert_lateral_gain: 0.0         # 0 = the insertion holds the heading and does not steer to the line.
+                                     # With 5 the robot turned 3-5 deg at the start (1.8 cm lateral error ->
+                                     # atan(5 * 0.018) = 5 deg). The fork tips (1.38 m ahead) moved about
+                                     # 10 cm sideways and pushed the pallet by 6-17 cm (real pose, differential
+                                     # robot). The alignment before the insertion removes the lateral error.
+    insert_strafe_speed: 0.04        # m/s, inside the pocket
+    stationary_time: 0.3             # s of rest before a skill step starts (was 0.5)
+    turn_speed: 0.4                  # rad/s, in-place correction of the heading before the insertion
+    align_settle_time: 0.3           # s of rest before the alignment is measured
+    align_samples: 6                 # 20 Hz ticks with new detections after the rest
     # Supervision
     stationary_timeout: 5.0
     stall_time: 2.0                  # motion is commanded but the robot does not move -> blocked
     lift_timeout: 30.0
-    load_settle_time: 1.0
+    load_settle_time: 0.5
+    load_measure_time: 0.5           # s, mean of the lift effort (the forks are not moving)
     load_low_fraction: 0.5           # the supported load must be 0.5 to 2.0 x the configured mass
     load_high_fraction: 2.0
     release_max_kg: 5.0              # below this value, the forks are empty

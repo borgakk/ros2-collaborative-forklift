@@ -46,7 +46,7 @@ from rclpy.qos import (DurabilityPolicy, qos_profile_sensor_data, QoSProfile,
 from rclpy.task import Future
 from rclpy.time import Time
 from sensor_msgs.msg import Imu, LaserScan
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformException, TransformListener
 
@@ -116,6 +116,8 @@ class MissionManager(Node):
                                  lambda m: setattr(self, 'amcl', m), latched)
         self.create_subscription(Bool, 'estop', self._on_estop, 10)
         self.status_pub = self.create_publisher(MissionStatus, 'mission/status', latched)
+        # tells the load handler to move the forks during the navigation
+        self.prepare_pub = self.create_publisher(String, 'handling/prepare', 10)
 
         self.nav = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.pickup = ActionClient(self, PickupLoad, 'handling/pickup')
@@ -424,7 +426,11 @@ class MissionManager(Node):
             await self.sleep(0.2)
         return Outcome(False, 'LOCALIZATION_FAILED', why)
 
+    def prepare_forks(self, command):
+        self.prepare_pub.publish(String(data=command))
+
     async def do_nav_pickup(self, state, goal_handle):
+        self.prepare_forks('pickup')
         return await self.navigate(self.mission.pickup_staging(self.fsm.current_box),
                                    state, goal_handle)
 
@@ -432,6 +438,7 @@ class MissionManager(Node):
         dest = self.fsm.current_destination
         if dest not in self.mission.destinations:
             return Outcome(False, 'DESTINATION_INVALID', f'{dest!r} is not configured')
+        self.prepare_forks(f'place:{dest}')
         return await self.navigate(self.mission.destination_staging(dest), state, goal_handle)
 
     async def do_return_home(self, state, goal_handle):

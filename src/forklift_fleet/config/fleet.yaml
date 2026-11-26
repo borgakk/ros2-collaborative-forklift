@@ -9,17 +9,33 @@ fleet_coordinator:
     home.forklift_1: [-6.0, 0.0, 0.0]
     home.forklift_2: [5.0, 0.0, 3.14159]
     # Robot type of each robot (forklift_bringup/launch/robot.launch.py): standard | high_lift | mecanum.
-    # forklift_1: slow, differential, 3 m lift, high capacity. forklift_2: fast Mecanum, 0.5 m lift,
-    # low capacity. The coordinator does not use these values yet (the allocator has no capability model).
-    # multi_sim.launch.py reads them. Use robot_types:=standard there to run two standard robots.
+    # forklift_1: differential, 2 m lift, high capacity. forklift_2: fast Mecanum, 0.45 m lift,
+    # low capacity. The allocator uses the capabilities below (test_fleet_config.py compares them
+    # with the overlays in forklift_description/config).
     robot_type.forklift_1: high_lift
     robot_type.forklift_2: mecanum
+    # --- capabilities (allocator.py) ---
+    # max_load_kg = rated load of the lift; max_lift_height = travel of the lift. They are
+    # limits: a task that needs more goes to the other robot, or it is held if no robot can do it.
+    max_load_kg.forklift_1: 500.0
+    max_load_kg.forklift_2: 150.0
+    max_lift_height.forklift_1: 2.0
+    max_lift_height.forklift_2: 0.45
+    lift_margin: 0.12              # fork position above the platform height for a placement (0.25 m -> 0.37 m)
+    # ESTIMATES from the runs of 2026-11-26 (a mean over the legs with the start, the turns and the
+    # stops; s of handling = pickup + placement without the navigation). Tune them with the metrics.
+    speed.forklift_1: 0.5          # m/s
+    speed.forklift_2: 0.6
+    handling_time.forklift_1: 46.0 # s
+    handling_time.forklift_2: 37.0
     autostart: false
     # --- communication ---
     heartbeat_timeout: 5.0         # if there is no RobotStatus for this time -> the robot is not available
     ack_timeout: 8.0               # if the RunMission goal is not accepted in this time -> try again
     ack_retries: 2                 # then the robot is out of service for comm_cooldown
     comm_cooldown: 30.0
+    failure_cooldown: 10.0         # s without new tasks after a task that failed before the lift (the attempts of
+                                   # the task are not used up in seconds)
     max_task_attempts: 2           # if a task fails this number of times (before the lift) -> FAILED
     mission_timeout: 3000.0
     # --- allocation (allocator.py; penalties are in metres of travel) ---

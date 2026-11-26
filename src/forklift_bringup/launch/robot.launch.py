@@ -268,7 +268,7 @@ def robot(context):
         actions.append(Node(
             package='forklift_control', executable='load_handler', output='screen',
             parameters=[params('forklift_control', 'load_handler.yaml'), sim,
-                        {'frame_prefix': prefix}]))
+                        {**overlay.get('load_handler', {}), 'frame_prefix': prefix}]))
     if navigation_mode == 'navigation' and arg('mission_manager').lower() == 'true':
         record_dir = os.path.expanduser('~/.ros/forklift_missions') + (f'/{ns}' if ns else '')
         actions.append(Node(

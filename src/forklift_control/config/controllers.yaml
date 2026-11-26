@@ -37,13 +37,13 @@ forklift_base_controller:
     # Hard limits of the actuators. Navigation applies smaller limits (Phase 5).
     linear.x.max_velocity: 1.0
     linear.x.min_velocity: -0.5
-    linear.x.max_acceleration: 0.5
+    linear.x.max_acceleration: 0.8
     linear.x.min_acceleration: -0.5
     linear.x.max_deceleration: -0.5
-    angular.z.max_velocity: 0.8
-    angular.z.min_velocity: -0.8
-    angular.z.max_acceleration: 1.0
-    angular.z.min_acceleration: -1.0
+    angular.z.max_velocity: 1.0
+    angular.z.min_velocity: -1.0
+    angular.z.max_acceleration: 1.5
+    angular.z.min_acceleration: -1.5
 
 # Lift: trajectory controller on the velocity interface. The lift_controller node sends
 # trapezoidal profiles. The joint velocity limit is the maximum speed of these profiles.

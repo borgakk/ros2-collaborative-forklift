@@ -65,8 +65,21 @@ lift_controller:
     default_velocity: 0.40
     max_acceleration: 0.8
 
+# Pickup/placement speeds of the load handler (the defaults are for the differential robots).
+# The Mecanum robot has no acceleration limit in its controller and it brakes faster.
+load_handler:
+  approach_speed: 0.80
+  insert_speed: 0.35
+  reverse_speed: 0.50
+  entry_speed: 0.20
+  dock_decel: 0.6
+  turn_speed: 0.8
+  holonomic: true                 # sideways alignment instead of a rearward back-off
+  strafe_speed: 0.20              # in-place sideways correction before the insertion
+  approach_strafe_speed: 0.40
+
 # Overrides for the Nav2 parameters of this robot (merged into nav2_params.yaml by
-# robot.launch.py: <node>: <parameter>: value). The standard robot has 0.4 m/s.
+# robot.launch.py: <node>: <parameter>: value). The standard robot has 0.8 m/s.
 # Reverse stays slow: only the rear LiDAR protects it. Braking: see test_robot_types.py.
 navigation:
   controller_server:
@@ -82,6 +95,14 @@ navigation:
     min_velocity: [-0.15, 0.0, -0.8]
     max_accel: [0.8, 0.0, 1.2]
     max_decel: [-1.0, 0.0, -1.2]
+
+# Tried and rejected (2026-11-26): MPPI with motion_model Omni (sideways motion on the path).
+# The missions finished (245-387 s instead of 117-127 s). Measured with the velocity chain of
+# the Mecanum robot: the MPPI output itself (cmd_vel_nav) rose from 0.02 to 0.22 m/s in 25 s
+# from a standstill. The smoother and the collision monitor did not limit it. A cheaper
+# CostCritic (no footprint, weight 1.5) did not change this. The cause is open (sampling and
+# critic tuning: batch size, temperature, noise, critics). Pure pursuit is faster on this CPU.
+# Gain of omni motion: only the in-place rotation at the start of a leg (about 1-2 s).
 
 # Footprint of this robot (file in forklift_navigation/config): the rear wheels are wider
 # than the rear casters of the other robots.

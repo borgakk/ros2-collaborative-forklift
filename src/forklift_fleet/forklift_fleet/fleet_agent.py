@@ -25,6 +25,7 @@ import signal
 from action_msgs.msg import GoalStatus, GoalStatusArray
 from forklift_interfaces.msg import ForkState, MissionStatus, RobotStatus, SafetyStatus
 from geometry_msgs.msg import Point, PoseWithCovarianceStamped
+from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import Odometry, Path
 import numpy as np
 import rclpy
@@ -96,6 +97,16 @@ def path_ahead(poses, x, y, length=6.0, spacing=0.25):
     return out
 
 
+NAV_NODES = ['controller_server', 'planner_server', 'behavior_server', 'bt_navigator',
+             'velocity_smoother', 'collision_monitor']
+ACTIVE_STATE_ID = 3                     # lifecycle_msgs/State.PRIMARY_STATE_ACTIVE
+
+
+def nav_stack_ready(states, nodes=NAV_NODES):
+    """Return True if every Nav2 node is known to be active (`states`: node -> bool)."""
+    return all(states.get(n) is True for n in nodes)
+
+
 class FleetAgent(Node):
 
     def __init__(self):
@@ -122,6 +133,13 @@ class FleetAgent(Node):
         self.create_subscription(GoalStatusArray, 'navigate_to_pose/_action/status',
                                  self._on_nav_status, 10)
         self.pub = self.create_publisher(RobotStatus, 'fleet/robot_status', 10)
+        # The Nav2 nodes: a goal that arrives before they are active is rejected. A lost response
+        # does not change the last known state (the service responses can be lost under load).
+        self.nav_nodes = list(self.declare_parameter('nav_nodes', NAV_NODES).value)
+        self.nav_states, self.nav_pending = {}, {}
+        self.nav_clients = {n: self.create_client(GetState, f'{n}/get_state')
+                            for n in self.nav_nodes}
+        self.create_timer(1.0, self._poll_nav_stack)
         self.create_timer(0.5, self.publish)
         # Outlines of the other robots for the costmaps of this robot.
         self.peer_margin = self.declare_parameter('peer_margin', 0.10).value
@@ -164,6 +182,23 @@ class FleetAgent(Node):
     def _on_nav_status(self, msg):
         self.nav_active = any(s.status in ACTIVE_GOAL for s in msg.status_list)
 
+    def _poll_nav_stack(self):
+        for name, client in self.nav_clients.items():
+            if not client.service_is_ready():
+                continue
+            if self.now() - self.nav_pending.get(name, -10.0) < 5.0:
+                continue                # the last request is still open
+            self.nav_pending[name] = self.now()
+            client.call_async(GetState.Request()).add_done_callback(
+                lambda fut, n=name: self._on_nav_state(n, fut))
+
+    def _on_nav_state(self, name, future):
+        self.nav_pending.pop(name, None)
+        try:
+            self.nav_states[name] = future.result().current_state.id == ACTIVE_STATE_ID
+        except Exception:               # no result: keep the last known state
+            pass
+
     def publish(self):
         s = RobotStatus()
         s.header.stamp = self.get_clock().now().to_msg()
@@ -174,6 +209,7 @@ class FleetAgent(Node):
         s.mission_state = mission_state
         s.mission_running = mission_state in RUNNING
         s.nav_active = self.nav_active
+        s.nav_ready = nav_stack_ready(self.nav_states, self.nav_nodes)
         s.state = ROBOT_STATE.get(mission_state, 'IDLE')
         if m is not None:
             s.current_box_id = m.current_box_id if s.mission_running else ''

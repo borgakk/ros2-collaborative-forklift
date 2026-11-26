@@ -22,7 +22,7 @@ OVERLAYS = {'standard': None, 'high_lift': PKG / 'config' / 'forklift_high_lift.
             'mecanum': PKG / 'config' / 'forklift_mecanum.yaml'}
 # Top-level keys of an overlay that are not sections of the base file.
 EXTRA_KEYS = {'drive_type', 'colors', 'mecanum', 'navigation', 'navigation_footprints',
-              'lift_controller'}
+              'lift_controller', 'load_handler'}
 G = 9.81
 
 
@@ -107,10 +107,14 @@ def test_the_mecanum_robot_is_faster_than_the_others():
     mecanum = params_of('mecanum')
     standard_rim = BASE['drive_wheel']['max_velocity'] * BASE['drive_wheel']['radius']
     mecanum_rim = mecanum['drive_wheel']['max_velocity'] * mecanum['drive_wheel']['radius']
-    assert mecanum_rim > 1.5 * standard_rim
+    assert mecanum_rim > 1.2 * standard_rim
     nav = mecanum['navigation']
-    assert nav['controller_server']['FollowPath']['desired_linear_vel'] > 0.4
-    assert nav['velocity_smoother']['max_velocity'][0] > 0.4
+    standard_nav = yaml.safe_load(
+        (SRC / 'forklift_navigation' / 'config' / 'nav2_params.yaml').read_text())
+    standard_speed = standard_nav['controller_server']['ros__parameters']['FollowPath'][
+        'desired_linear_vel']
+    assert nav['controller_server']['FollowPath']['desired_linear_vel'] > standard_speed
+    assert nav['velocity_smoother']['max_velocity'][0] > standard_speed
 
 
 def test_the_high_lift_robot_is_not_faster_than_the_standard_robot():

@@ -52,7 +52,7 @@ robot parameters:
    stationary, make sure that the lateral error is 3 cm or less and the heading error is 2° or
    less. If an error is more than this, move back 0.4 m and try again (2 retries). If the
    retries fail, the result is `ALIGNMENT_FAILED`.
-6. **Insert:** move the last 1.08 m straight along the docking line at 0.15 m/s (it slows down near the end). Near the
+6. **Insert:** move the last 1.08 m straight along the docking line (0.15 m/s in the pocket entrance, then up to 0.25 m/s; it brakes at the end). Near the
    pallet, the QR code goes out of the camera view. Thus this step uses only odometry. If the
    robot stalls for 2 s, the result is `INSERTION_BLOCKED`.
 7. **Lift** to the transport height. After 1 s, the load estimate from the lift effort must be
@@ -91,7 +91,7 @@ robot parameters:
 | Item | Value | Basis |
 |---|---|---|
 | Lateral / heading error before insertion | 3 cm / 2° | 10 cm pocket clearance on each side, less 1.1 m of blind travel at 2° (≈ 4 cm) |
-| Speeds | approach 0.30, insert 0.15, reverse 0.25 m/s | docking was 85 % of the time of one box at 0.12 / 0.06 / 0.06; the rear LiDAR protects the reverse motion |
+| Speeds | approach 0.40, insert 0.25 (0.15 in the pocket entrance), reverse 0.30 m/s; Mecanum 0.80 / 0.35 (0.20) / 0.50 | braking profile v = sqrt(vmin² + 2·a·d) with a = 0.4 m/s² (Mecanum 0.6) and a 0.04 m/s creep for the last 3 cm. The old law v = 0.8·d never reached the maximum speed (time constant 1.25 s). The rear LiDAR still protects the reverse motion |
 | Approach steering gains | heading 2.0, lateral 5.0, ≤ 0.4 rad/s | removes 15 cm / 10° in 0.7 m (unit test) |
 | Lift | limits from the URDF (0–1 m, 0.2 m/s), action timeout 30 s | lift_controller refuses goals out of range |
 | Load check | 0.5–2.0 × mass to accept; < 5 kg means empty | effort − (110 kg × g), mass from the URDF |
@@ -154,3 +154,45 @@ or a last QR measurement nearer to the pallet.
 * **Physics:** DART contact with μ 0.6–0.8 and low accelerations (≤ 0.4 m/s²). Harder braking
   or forks with no tilt on real hardware can cause different behavior. There is no mast tilt to
   hold the load.
+
+## Faster handling (2026-11-26)
+
+* **In-place alignment instead of a back-off.** If only the heading is wrong, the robot turns
+  about `base_footprint` (`fine_align`). The Mecanum robot (`holonomic: true` in its overlay) also
+  moves sideways (up to 15 cm). The back-off (0.4 m rearward, new approach) stays for larger errors.
+* **Forks move during the navigation.** The mission manager publishes `handling/prepare`
+  (`pickup` or `place:<destination>`) when a navigation starts. The load handler moves the forks
+  to the insertion or placement height. The skill skips its lift goal if the forks are there.
+* **The forks go down while the camera verifies the placement** (after the retract).
+* **Nav2 staging tolerance** 0.15 m / 0.15 rad (was 0.08 / 0.06): the camera approach corrects the rest.
+* **Pocket entrance at 0.15 m/s.** With 0.25 m/s from the start, the forks pushed a pallet by
+  12–23 cm in some runs (real pose from Gazebo). The entry zone is the tip gap + 0.20 m.
+* Rejected: MPPI with the Omni model for the Mecanum robot. The mission took 270 s instead of
+  127 s (the control loop dropped to 11.8 Hz on this CPU).
+
+### Why the differential robot pushed the pallet (2026-11-26)
+
+The real poses (Gazebo) of the robot and the pallet, at 10 Hz, showed it. Before the insertion the
+robot stood at the pre-insertion pose (heading −90.3°, 1.8 cm lateral error). In the first
+second of the insertion, its heading swung to −95.1° (−92.8° in another run). The steering law
+turns the heading to −atan(5 × lateral): 1.8 cm gives 5°. The error is measured at the axle, but
+the fork tips are 1.38 m ahead: 5° moves them about 10 cm sideways, which is nearly the whole pocket
+clearance. The tips hit the pallet and pushed it by 17 cm and 6 cm (2 of 3 runs). The Mecanum robot
+never pushed: it moves sideways and does not turn its heading to the line. Fix: `insert_lateral_gain: 0`
+(the insertion holds the heading). The lateral error is removed before the insertion (3 cm
+tolerance). Check: 3 runs after the change, 2 completed missions, no push (pre-lift displacement 0.0 cm;
+placement error of BOX_A 2.2 and 3.1 cm; the third run did not start because of a start-up
+problem, see below).
+
+Start-up problem seen in several runs: the coordinator dispatched a task when the robot was
+"available" (heartbeat, localized) but Nav2 was not active yet (`Nav2 ended with status -2`), or the
+lifecycle start of a robot timed out (`get_state response lost`). Failed attempts before the lift
+counted toward `max_task_attempts`, and a task could become `FAILED` in the first 15 s.
+Fix (2026-11-26): the fleet agent asks the lifecycle state of the six Nav2 nodes and reports
+`RobotStatus.nav_ready` (a lost response keeps the last known state; unknown is not ready). The
+coordinator dispatches only if `localized and nav_ready` ("unavailable (Nav2 not active)"
+otherwise). After a task that failed before the lift, the robot gets no new task for
+`failure_cooldown` (10 s). Check: 3 runs, all `delivered 3/3` in 119 / 122 / 129 s; no start-up
+failure; BOX_A not pushed. In one run the robot changed twice between available and
+"Nav2 not active" and 2 navigation goals were rejected, but the mission still finished. Not fixed:
+if a robot never gets its Nav2 stack active, the other robot does all the work (237 s in one run).

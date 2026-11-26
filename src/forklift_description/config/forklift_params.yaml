@@ -36,7 +36,7 @@ drive_wheel:               # 2 driven wheels on the front axle (differential dri
   width: 0.12
   separation: 0.80         # track width from center to center
   mass: 30.0
-  max_velocity: 6.0        # rad/s  (approximately 1.08 m/s at the rim)
+  max_velocity: 8.0        # rad/s  (approximately 1.44 m/s at the rim; was 6.0: v 0.8 + turning needs more)
   max_effort: 400.0        # N*m
 
 caster:                    # 2 rear passive support wheels, modelled as spheres

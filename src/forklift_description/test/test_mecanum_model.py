@@ -39,7 +39,7 @@ def model(urdf):
 def test_overlay_declares_mecanum_and_replaces_only_its_sections():
     assert MEC['drive_type'] == 'mecanum'
     extra = {'drive_type', 'mecanum', 'colors', 'navigation', 'navigation_footprints',
-             'lift_controller'}
+             'lift_controller', 'load_handler'}
     assert set(MEC) <= set(BASE) | extra, 'unknown top-level section'
     # The wheel size must be the same as the front wheels of the differential robot.
     assert MEC['drive_wheel']['radius'] == pytest.approx(BASE['drive_wheel']['radius'])

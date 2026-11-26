@@ -89,29 +89,82 @@ def line_errors(robot, target, reverse=False):
 @dataclass(frozen=True)
 class ApproachGains:
     max_speed: float = 0.12
-    min_speed: float = 0.03
-    speed_gain: float = 0.8           # v = gain * remaining distance, with limits
+    min_speed: float = 0.04           # creep speed for the last `creep_distance`
+    decel: float = 0.4                # m/s^2, below the limit of the drive controller (0.5)
+    creep_distance: float = 0.03      # m
+    entry_length: float = 0.0         # m at the start of the segment with the speed `entry_speed`
+    entry_speed: float = 0.15
+    strafe_gain: float = 2.0          # holonomic robots: lateral speed = gain * lateral error
+    max_strafe: float = 0.15          # m/s
     heading_gain: float = 2.0
     lateral_gain: float = 5.0         # necessary heading = -atan(lateral_gain * lateral)
     max_angular: float = 0.4          # (the gains remove 15 cm / 10 deg in 0.7 m)
 
 
-def approach_command(err, gains, reverse=False):
+def approach_command(err, gains, reverse=False, travelled=None):
     """
     (v, w) to get to a target pose along its line.
 
     The robot moves along the target line. It turns its heading to -atan(k * lateral)
     (for reverse motion: +atan). For a unicycle, this converges on the line. The speed
-    decreases with the remaining distance. The speed is zero when the robot is at the target.
+    follows a braking profile: v = sqrt(min_speed^2 + 2 * decel * (remaining - creep_distance)),
+    limited by max_speed. The robot brakes at a constant deceleration and it creeps at min_speed
+    for the last centimetres. (The older proportional law, v = 0.8 * remaining, has a time constant
+    of 1.25 s: the last 20 cm took seconds and the maximum speed was not reached.) The speed
+    is zero when the robot is at the target.
+
+    `travelled` is the distance since the start of the segment. If gains.entry_length is set, the
+    speed is limited to gains.entry_speed during the first entry_length metres (the fork tips
+    enter the pallet pocket there; a fast contact pushed the pallet by 20 cm).
     """
     if err.remaining <= 0.0:
         return 0.0, 0.0
-    speed = min(gains.max_speed, max(gains.min_speed, gains.speed_gain * err.remaining))
+    limit = gains.max_speed
+    if travelled is not None and travelled < gains.entry_length:
+        limit = min(limit, gains.entry_speed)
+    speed = min(limit, math.sqrt(
+        gains.min_speed ** 2 + 2.0 * gains.decel * max(0.0, err.remaining - gains.creep_distance)))
     v = -speed if reverse else speed
     desired = math.atan(gains.lateral_gain * err.lateral) * (1.0 if reverse else -1.0)
     w = gains.heading_gain * wrap(desired - err.heading)
     w = max(-gains.max_angular, min(gains.max_angular, w))
     return v, w
+
+
+def holonomic_command(err, gains, reverse=False, travelled=None):
+    """
+    (vx, vy, w) in the robot frame for a robot that can move sideways (Mecanum).
+
+    The robot moves along the target line with the speed profile of approach_command(). It removes
+    the lateral error with a sideways speed and the heading error with the angular speed. It does
+    not steer the heading to the line: the forks stay parallel to the line (important at the
+    pallet). The line velocity (a, b) in the target frame is rotated into the robot frame.
+    """
+    if err.remaining <= 0.0:
+        return 0.0, 0.0, 0.0
+    a, _ = approach_command(err, gains, reverse, travelled)
+    b = max(-gains.max_strafe, min(gains.max_strafe, -gains.strafe_gain * err.lateral))
+    h = err.heading
+    vx = a * math.cos(h) + b * math.sin(h)
+    vy = -a * math.sin(h) + b * math.cos(h)
+    w = max(-gains.max_angular, min(gains.max_angular, -gains.heading_gain * wrap(h)))
+    return vx, vy, w
+
+
+def strafe_command(err, max_speed, gain=2.0, min_speed=0.03):
+    """Sideways speed that removes the lateral error of the line in place (holonomic robots)."""
+    vy = -gain * err.lateral
+    if abs(vy) < min_speed:
+        vy = math.copysign(min_speed, vy)
+    return max(-max_speed, min(max_speed, vy))
+
+
+def turn_command(err, max_angular, gain=2.0, min_angular=0.08):
+    """Angular speed that turns the robot in place to the heading of the line."""
+    w = -gain * err.heading
+    if abs(w) < min_angular:
+        w = math.copysign(min_angular, w)
+    return max(-max_angular, min(max_angular, w))
 
 
 def is_aligned(err, lateral_tol, heading_tol):

@@ -32,7 +32,8 @@ import os
 import signal
 
 from action_msgs.msg import GoalStatus
-from forklift_fleet.allocator import AllocatorConfig, plan, RobotView, straight_route, TaskView
+from forklift_fleet.allocator import (AllocatorConfig, plan, RobotView, straight_route,
+                                      TaskView, unassignable)
 from forklift_fleet.conflicts import (choose_priority, Contender, DeadlockMonitor, in_zone,
                                       path_conflict, ReservationTable)
 from forklift_fleet.registry import (ACTIVE, DELIVERED, DELIVERY_IN_PROGRESS, PICKED_UP,
@@ -123,9 +124,16 @@ class Coordinator(Node):
             ('deadlock_min_progress', 0.3), ('backoff_distance', 1.0),
             ('escalate_after', 180.0), ('rear_conflict_range', 3.0),
             ('rear_wait_before_move', 8.0), ('home_tolerance', 0.25),
-            ('home_attempts', 3))}
+            ('home_attempts', 3), ('failure_cooldown', 10.0))}
         self.alloc_cfg = AllocatorConfig(**{k: float(p(k, getattr(AllocatorConfig(), k)))
                                             for k in AllocatorConfig.__dataclass_fields__})
+        # Capabilities of each robot type (the allocator compares the robots in seconds and checks
+        # the mass and the lift height). 1e9 = no limit. Values: fleet.yaml.
+        self.caps = {rid: {'speed': float(p(f'speed.{rid}', 0.0)),
+                           'handling_time': float(p(f'handling_time.{rid}', 0.0)),
+                           'max_load_kg': float(p(f'max_load_kg.{rid}', 1e9)),
+                           'max_lift': float(p(f'max_lift_height.{rid}', 1e9))} for rid in ids}
+        self.lift_margin = float(p('lift_margin', 0.12))
         self.robots = {}
         for rid in ids:
             home = p(f'home.{rid}', [0.0, 0.0, 0.0])
@@ -319,8 +327,8 @@ class Coordinator(Node):
     def update_availability(self, now):
         for r in self.robots.values():
             fresh = r.heartbeat is not None and now - r.heartbeat <= self.cfg['heartbeat_timeout']
-            ok = fresh and r.status.localized and r.status.state != 'FAULT' and \
-                now >= r.benched_until
+            ready = r.status.localized and r.status.nav_ready
+            ok = fresh and ready and r.status.state != 'FAULT' and now >= r.benched_until
             if ok and r.lost and r.mission is not None:
                 # The robot is back after it was declared lost. Its
                 # task can have a different robot now.
@@ -330,6 +338,7 @@ class Coordinator(Node):
             if r.available and not ok:
                 why = ('heartbeat lost' if not fresh else
                        'not localized' if not r.status.localized else
+                       'Nav2 not active' if not r.status.nav_ready else
                        'FAULT' if r.status.state == 'FAULT' else 'benched')
                 self.event(f'{r.id} unavailable ({why})', warn=True)
                 if not fresh:
@@ -402,6 +411,8 @@ class Coordinator(Node):
                        f'{result.message}', warn=True)
         elif t.state in ACTIVE:
             self.registry.release(task_id, r.id, result.message)
+            # A robot that fails at once would use all the attempts of the task in seconds.
+            r.benched_until = max(r.benched_until, self.now() + self.cfg['failure_cooldown'])
             self.event(f'{task_id} released after {r.id} failed before lifting: '
                        f'{result.message}', warn=True)
 
@@ -424,18 +435,31 @@ class Coordinator(Node):
         if idle and unassigned:
             views = []
             for r in avail:
-                v = RobotView(r.id, *r.pose, failures=r.failures)
+                v = RobotView(r.id, *r.pose, failures=r.failures, **self.caps[r.id])
                 owned = self.registry.owned_by(r.id)
                 if owned:
                     t = owned[0]
                     drop = self._place_xy(t.qr_destination_id or t.destination_id)
                     v.ready_x, v.ready_y = drop
                     v.remaining = straight_route(self.alloc_cfg)('', r.pose, drop)
+                    if v.speed > 0:
+                        v.remaining = v.remaining / v.speed
                     v.targets = [drop]
                 views.append(v)
             tasks = [TaskView(t.task_id, self._place_xy(t.pickup_id),
-                              self._place_xy(t.destination_id), t.reserved_for)
+                              self._place_xy(t.destination_id), t.reserved_for,
+                              mass_kg=self.mission_cfg.load.mass,
+                              lift_height=self.mission_cfg.destinations[
+                                  t.destination_id].surface_height + self.lift_margin)
                      for t in unassigned]
+            # A task that no robot of the fleet can do (mass or lift height): do not plan it.
+            all_views = [RobotView(rid, 0.0, 0.0, **c) for rid, c in self.caps.items()]
+            for tv in unassignable(all_views, tasks):
+                self.registry.hold(tv.task_id, f'no robot can do it (mass {tv.mass_kg:.0f} kg, '
+                                               f'fork height {tv.lift_height:.2f} m)')
+                self.event(f'{tv.task_id} cannot be done by any robot of the fleet (mass '
+                           f'{tv.mass_kg:.0f} kg, fork height {tv.lift_height:.2f} m)', warn=True)
+                tasks.remove(tv)
             assignment, makespan, total = plan(views, tasks, cfg=self.alloc_cfg)
             for rid, seq in assignment.items():
                 for tv in seq:
@@ -444,8 +468,9 @@ class Coordinator(Node):
                              for rid, seq in assignment.items())
             if text != getattr(self, '_last_plan', ''):
                 where = ', '.join(f'{v.robot_id} at ({v.x:.1f}, {v.y:.1f})' for v in views)
-                self.event(f'allocation: {text} (makespan {makespan:.1f} m, total '
-                           f'{total:.1f} m; {where})')
+                unit = 's' if any(v.speed > 0 for v in views) else 'm'
+                self.event(f'allocation: {text} (makespan {makespan:.1f} {unit}, total '
+                           f'{total:.1f} {unit}; {where})')
                 self._last_plan = text
             for r in idle:
                 seq = assignment.get(r.id, [])

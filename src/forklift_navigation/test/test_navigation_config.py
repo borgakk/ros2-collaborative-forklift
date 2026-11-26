@@ -127,7 +127,7 @@ def test_all_scan_consumers_use_the_filtered_scan():
 def test_speed_limits_respect_tip_over_and_reverse_limits():
     vs = ros('velocity_smoother')
     assert abs(vs['max_decel'][0]) <= 0.5          # limit from the tip-over analysis
-    assert vs['max_velocity'][0] <= 0.5
+    assert vs['max_velocity'][0] <= 0.8            # braking 0.5 m/s^2: 0.64 m from 0.8 m/s
     # the rear is not visible: only slow reverse motion
     assert vs['min_velocity'][0] >= -0.2
     assert ros('controller_server')['FollowPath']['allow_reversing'] is False

@@ -1,5 +1,6 @@
 """The controller configuration must agree with the parameters of the robot description."""
 
+import math
 import pathlib
 
 import pytest
@@ -148,3 +149,54 @@ def test_mecanum_odometry_does_not_publish_tf():
 
 def test_mecanum_lift_controller_equals_the_differential_one():
     assert MECANUM['fork_lift_controller'] == CONTROLLERS['fork_lift_controller']
+
+
+def test_robot_type_load_handler_overrides_are_known_parameters_and_faster_for_mecanum():
+    """An overlay key that the node does not declare would silently do nothing."""
+    base = yaml.safe_load((PKG / 'config' / 'load_handler.yaml').read_text())
+    base = base['load_handler']['ros__parameters']
+    overlay = yaml.safe_load((PKG.parent / 'forklift_description' / 'config' /
+                              'forklift_mecanum.yaml').read_text())['load_handler']
+    assert set(overlay) <= set(base)
+    for key in ('approach_speed', 'insert_speed', 'reverse_speed'):
+        assert overlay[key] > base[key], key
+    source = (PKG / 'forklift_control' / 'load_handler.py').read_text()
+    for key in base:
+        if key.endswith('_speed') or key == 'dock_decel':
+            assert f"'{key}'" in source, f'{key} is not read by load_handler.py'
+
+
+def test_load_handler_declares_each_parameter_only_once():
+    """A duplicate declaration raises ParameterAlreadyDeclaredException at start-up."""
+    import collections
+    import re
+    source = (PKG / 'forklift_control' / 'load_handler.py').read_text()
+    names = re.findall(r"\bp\('([a-z_0-9]+)'", source)
+    duplicates = [n for n, c in collections.Counter(names).items() if c > 1]
+    assert not duplicates, duplicates
+
+
+def test_nav2_goal_tolerance_is_inside_the_handler_staging_tolerance():
+    """A staging pose that Nav2 accepts must be accepted by the skills (no second Nav2 run)."""
+    nav = PKG.parent / 'forklift_navigation' / 'config' / 'nav2_params.yaml'
+    if not nav.exists():
+        pytest.skip('navigation package is not in the source tree')
+    goal = yaml.safe_load(nav.read_text())['controller_server']['ros__parameters'][
+        'goal_checker']
+    handler = yaml.safe_load((PKG / 'config' / 'load_handler.yaml').read_text())
+    hp = handler['load_handler']['ros__parameters']
+    assert goal['xy_goal_tolerance'] <= hp['staging_tolerance']
+    assert math.degrees(goal['yaw_goal_tolerance']) <= hp['staging_yaw_tolerance_deg']
+
+
+def test_mecanum_overlay_enables_sideways_alignment_and_the_node_reads_it():
+    overlay = yaml.safe_load((PKG.parent / 'forklift_description' / 'config' /
+                              'forklift_mecanum.yaml').read_text())['load_handler']
+    assert overlay['holonomic'] is True
+    base = yaml.safe_load((PKG / 'config' / 'load_handler.yaml').read_text())
+    assert base['load_handler']['ros__parameters']['holonomic'] is False
+    source = (PKG / 'forklift_control' / 'load_handler.py').read_text()
+    for key in ('holonomic', 'insert_lateral_gain', 'strafe_speed', 'approach_strafe_speed',
+                'insert_strafe_speed',
+                'stationary_time'):
+        assert f"'{key}'" in source, key

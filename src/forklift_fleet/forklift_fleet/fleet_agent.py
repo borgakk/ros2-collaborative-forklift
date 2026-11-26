@@ -107,6 +107,11 @@ def nav_stack_ready(states, nodes=NAV_NODES):
     return all(states.get(n) is True for n in nodes)
 
 
+def systems_alive(now, odom_time, fork_time, max_age=3.0):
+    """Return True if odometry and fork state arrive (the controllers of the robot run)."""
+    return now - odom_time <= max_age and now - fork_time <= max_age
+
+
 class FleetAgent(Node):
 
     def __init__(self):
@@ -124,9 +129,9 @@ class FleetAgent(Node):
         self.latched = latched
         self.subscribe_latched()
         self.create_timer(10.0, self._watchdog)
-        self.create_subscription(Odometry, 'odometry/filtered',
-                                 lambda m: setattr(self, 'odom', m), 10)
-        self.create_subscription(ForkState, 'fork/state', lambda m: setattr(self, 'fork', m), 10)
+        self.odom_rx = self.fork_rx = -1e9
+        self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
+        self.create_subscription(ForkState, 'fork/state', self._on_fork, 10)
         self.create_subscription(SafetyStatus, 'safety/rear_status',
                                  lambda m: setattr(self, 'rear', m), 10)
         self.create_subscription(Path, 'plan', self._on_plan, 10)
@@ -182,6 +187,12 @@ class FleetAgent(Node):
     def _on_nav_status(self, msg):
         self.nav_active = any(s.status in ACTIVE_GOAL for s in msg.status_list)
 
+    def _on_odom(self, msg):
+        self.odom, self.odom_rx = msg, self.now()
+
+    def _on_fork(self, msg):
+        self.fork, self.fork_rx = msg, self.now()
+
     def _poll_nav_stack(self):
         for name, client in self.nav_clients.items():
             if not client.service_is_ready():
@@ -210,6 +221,7 @@ class FleetAgent(Node):
         s.mission_running = mission_state in RUNNING
         s.nav_active = self.nav_active
         s.nav_ready = nav_stack_ready(self.nav_states, self.nav_nodes)
+        s.systems_ready = systems_alive(self.now(), self.odom_rx, self.fork_rx)
         s.state = ROBOT_STATE.get(mission_state, 'IDLE')
         if m is not None:
             s.current_box_id = m.current_box_id if s.mission_running else ''

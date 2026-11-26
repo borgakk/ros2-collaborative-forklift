@@ -30,6 +30,10 @@ def generate_launch_description():
         arguments=['joint_state_broadcaster', 'forklift_base_controller', 'fork_lift_controller',
                    '--controller-manager', LaunchConfiguration('controller_manager'),
                    '--controller-manager-timeout', '120',
+                   # The defaults (5 s) are too short while many nodes start: "Switch
+                   # controller timed out after 5 seconds" stopped the spawner and the robot
+                   # had no controllers.
+                   '--switch-timeout', '60', '--service-call-timeout', '30',
                    '--param-file', LaunchConfiguration('controllers_file')],
         parameters=[{'use_sim_time': use_sim_time}],
     )

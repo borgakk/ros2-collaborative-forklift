@@ -327,7 +327,7 @@ class Coordinator(Node):
     def update_availability(self, now):
         for r in self.robots.values():
             fresh = r.heartbeat is not None and now - r.heartbeat <= self.cfg['heartbeat_timeout']
-            ready = r.status.localized and r.status.nav_ready
+            ready = r.status.localized and r.status.nav_ready and r.status.systems_ready
             ok = fresh and ready and r.status.state != 'FAULT' and now >= r.benched_until
             if ok and r.lost and r.mission is not None:
                 # The robot is back after it was declared lost. Its
@@ -339,6 +339,7 @@ class Coordinator(Node):
                 why = ('heartbeat lost' if not fresh else
                        'not localized' if not r.status.localized else
                        'Nav2 not active' if not r.status.nav_ready else
+                       'controllers not running' if not r.status.systems_ready else
                        'FAULT' if r.status.state == 'FAULT' else 'benched')
                 self.event(f'{r.id} unavailable ({why})', warn=True)
                 if not fresh:

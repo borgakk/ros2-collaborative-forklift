@@ -239,12 +239,30 @@ class LoadHandler(Node):
             await self.tick()
         raise HandlingFailure('NOT_STATIONARY', 'robot did not come to rest')
 
+    async def reply(self, make_future, timeout, attempts, code, what):
+        """
+        Wait for a response (action goal, service). Send the request again if it is lost.
+
+        A DDS response can be lost under load. An await without a time limit would then stop
+        the skill for ever (seen: a pickup that did nothing for 18 minutes).
+        """
+        for _ in range(attempts):
+            future = make_future()
+            deadline = self.now() + timeout
+            while not future.done() and self.now() < deadline:
+                await self.tick()
+            if future.done():
+                return future.result()
+            self.get_logger().warn(f'{what}: no response in {timeout:.0f} s, sending it again')
+        raise HandlingFailure(code, f'{what}: no response after {attempts} requests')
+
     async def start_fork(self, height):
         """Send a lift goal and return at once. finish_fork() waits for the result."""
         if not self.lift.wait_for_server(timeout_sec=5.0):
             raise HandlingFailure('LIFT_FAILED', 'lift action server unavailable')
-        send = self.lift.send_goal_async(SetForkHeight.Goal(height=float(height)))
-        handle = await send
+        handle = await self.reply(
+            lambda: self.lift.send_goal_async(SetForkHeight.Goal(height=float(height))),
+            6.0, 3, 'LIFT_FAILED', f'lift goal {height:.3f} m')
         if not handle.accepted:
             raise HandlingFailure('LIFT_FAILED', f'lift rejected height {height:.3f} m')
         return handle, handle.get_result_async(), self.now() + self.lift_timeout, height
@@ -320,7 +338,8 @@ class LoadHandler(Node):
         goal.pose.pose.position.x, goal.pose.pose.position.y = staging.x, staging.y
         goal.pose.pose.orientation.z = math.sin(staging.yaw / 2)
         goal.pose.pose.orientation.w = math.cos(staging.yaw / 2)
-        handle = await self.nav.send_goal_async(goal)
+        handle = await self.reply(lambda: self.nav.send_goal_async(goal), 8.0, 3,
+                                  'NAVIGATION_FAILED', 'Nav2 goal')
         if not handle.accepted:
             raise HandlingFailure('NAVIGATION_FAILED', 'Nav2 rejected the staging goal')
         result_future = handle.get_result_async()
@@ -341,7 +360,11 @@ class LoadHandler(Node):
         if not self.load_state.wait_for_service(timeout_sec=2.0):
             self.get_logger().warn('footprint manager unavailable; footprint not switched')
             return
-        await self.load_state.call_async(SetBool.Request(data=loaded))
+        try:
+            await self.reply(lambda: self.load_state.call_async(SetBool.Request(data=loaded)),
+                             4.0, 3, 'LIFT_FAILED', 'footprint switch')
+        except HandlingFailure:
+            self.get_logger().warn('footprint not switched (no response)')
 
     async def measure_load(self, seconds):
         """Mean estimated load (kg) from /fork/state for `seconds` while the robot is stopped."""

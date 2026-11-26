@@ -84,25 +84,57 @@ load_handler:
 navigation:
   controller_server:
     FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
       desired_linear_vel: 1.0
-      rotate_to_heading_angular_vel: 0.8
-      max_angular_accel: 1.2
+      motion_model: "Omni"
+      time_steps: 40
+      model_dt: 0.05
+      batch_size: 1000
+      iteration_count: 1
+      prune_distance: 1.7
+      transform_tolerance: 0.2
+      temperature: 0.3
+      gamma: 0.015
+      visualize: false
+      regenerate_noises: true
+      vx_std: 0.3
+      vy_std: 0.15
+      wz_std: 0.4
+      vx_max: 1.0
+      vx_min: -0.15
+      vy_max: 0.5
+      wz_max: 0.8
+      ax_max: 3.0
+      ax_min: -3.0
+      ay_max: 3.0
+      ay_min: -3.0
+      az_max: 3.5
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic",
+                "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
+      ConstraintCritic: {enabled: true, cost_power: 1, cost_weight: 4.0}
+      GoalCritic: {enabled: true, cost_power: 1, cost_weight: 5.0, threshold_to_consider: 1.4}
+      GoalAngleCritic: {enabled: true, cost_power: 1, cost_weight: 3.0, threshold_to_consider: 0.5}
+      PreferForwardCritic: {enabled: true, cost_power: 1, cost_weight: 5.0, threshold_to_consider: 0.5}
+      CostCritic: {enabled: true, cost_power: 1, cost_weight: 2.0, critical_cost: 300.0, consider_footprint: false, collision_cost: 1000000.0, near_goal_distance: 1.0, trajectory_point_step: 2}
+      PathAlignCritic: {enabled: true, cost_power: 1, cost_weight: 14.0, max_path_occupancy_ratio: 0.05, trajectory_point_step: 4, threshold_to_consider: 0.5, offset_from_furthest: 20, use_path_orientations: false}
+      PathFollowCritic: {enabled: true, cost_power: 1, cost_weight: 8.0, offset_from_furthest: 5, threshold_to_consider: 1.4}
+      PathAngleCritic: {enabled: true, cost_power: 1, cost_weight: 2.0, offset_from_furthest: 4, threshold_to_consider: 0.5, max_angle_to_furthest: 1.0, mode: 0}
   behavior_server:
     max_rotational_vel: 0.8
     rotational_acc_lim: 1.2
   velocity_smoother:
-    max_velocity: [1.0, 0.0, 0.8]
-    min_velocity: [-0.15, 0.0, -0.8]
-    max_accel: [0.8, 0.0, 1.2]
-    max_decel: [-1.0, 0.0, -1.2]
+    max_velocity: [1.0, 0.5, 0.8]
+    min_velocity: [-0.15, -0.5, -0.8]
+    max_accel: [0.8, 0.5, 1.2]
+    max_decel: [-1.0, -0.5, -1.2]
 
-# Tried and rejected (2026-11-26): MPPI with motion_model Omni (sideways motion on the path).
-# The missions finished (245-387 s instead of 117-127 s). Measured with the velocity chain of
-# the Mecanum robot: the MPPI output itself (cmd_vel_nav) rose from 0.02 to 0.22 m/s in 25 s
-# from a standstill. The smoother and the collision monitor did not limit it. A cheaper
-# CostCritic (no footprint, weight 1.5) did not change this. The cause is open (sampling and
-# critic tuning: batch size, temperature, noise, critics). Pure pursuit is faster on this CPU.
-# Gain of omni motion: only the in-place rotation at the start of a leg (about 1-2 s).
+# MPPI with the Omni motion model: the Mecanum robot moves sideways on the path and does not turn
+# in place first (the pure pursuit controller of the other robots has no sideways speed).
+# History (2026-11-26): with ax_max/ay_max 0.8 and 0.5 (the limits of the velocity smoother) the output
+# rose from 0.02 to 0.22 m/s in 25 s (missions took 245-387 s). The sampled accelerations must be
+# the generous values of the Nav2 example (3.0); the velocity smoother enforces the real limits.
+# With 3.0 and a wider sampling (vx_std 0.3), the first navigation leg took 8.2 s (pure pursuit:
+# 13 s) and the second 20.6 s (21 s). Speed feedback (odometry/filtered) agrees with the real speed.
 
 # Footprint of this robot (file in forklift_navigation/config): the rear wheels are wider
 # than the rear casters of the other robots.

@@ -191,10 +191,13 @@ with the ground truth. The EKF fuses `vx`, `vy` and `vyaw` of the odometry.
   behaviour is necessary.
 * The rear LiDAR protects only reverse motion (`linear.x < 0`). There is no protection for
   lateral and diagonal motion.
-* Nav2 uses the regulated pure pursuit controller. It does not command lateral motion. The
-  robot drives like a differential robot (faster, with the Mecanum footprint
-  `footprints_mecanum.yaml`). The lateral motion works with the keyboard and with direct
-  commands. A Nav2 controller that uses it (for example MPPI) is not set up yet.
+* Nav2 uses MPPI with the Omni motion model for this robot (`forklift_mecanum.yaml`,
+  `navigation:`). It moves sideways on the path and does not turn in place first. The other robot
+  types use the regulated pure pursuit controller (no sideways speed). The MPPI sampled accelerations
+  must be the generous values of the Nav2 example (3.0): with the limits of the velocity smoother
+  (0.8 / 0.5) the output rose by only 0.01 m/s^2. Measured: the first navigation leg took 8.2 s
+  (pure pursuit: 13 s) and the second 20.6 s (21 s). The pickup and placement skills also move
+  the Mecanum robot sideways (`holonomic: true` in the overlay of `load_handler`).
 * If `vx`, `vy` and `wz` are all at their limits at the same time, the wheel speed limit is
   exceeded. Navigation must use smaller combined limits.
 * The Mecanum robot did the existing mission in the fleet together with the high-lift robot

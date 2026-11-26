@@ -15,12 +15,21 @@ patterns=(
   'rviz2/rviz2'
   'install/forklift_'      # all nodes of this workspace (load_handler, mission_manager, fleet_*, ...)
 )
+# Fast DDS leaves shared-memory segments of killed processes in /dev/shm (hundreds after many
+# interrupted runs). New nodes then try dead endpoints: lost service responses, goals without
+# acknowledgement. Delete only the segments that no process has open.
+cleanup_shm() {
+  for f in /dev/shm/fastrtps_*; do
+    [[ -e "$f" ]] && ! fuser -s "$f" 2>/dev/null && rm -f "$f"
+  done
+}
 for p in "${patterns[@]}"; do pkill -INT -f "$p" 2>/dev/null; done
 for _ in $(seq 1 50); do
   alive=0
   for p in "${patterns[@]}"; do pgrep -f "$p" >/dev/null && alive=1; done
-  [[ $alive -eq 0 ]] && { echo "simulation stopped"; exit 0; }
+  [[ $alive -eq 0 ]] && { cleanup_shm; echo "simulation stopped"; exit 0; }
   sleep 0.2
 done
 for p in "${patterns[@]}"; do pkill -KILL -f "$p" 2>/dev/null; done
+cleanup_shm
 echo "simulation killed (did not exit on SIGINT)"

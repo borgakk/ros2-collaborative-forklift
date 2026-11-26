@@ -18,7 +18,8 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
+from launch.actions import (DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction,
+                            SetEnvironmentVariable)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
@@ -66,6 +67,13 @@ def robots(context):
 
 def generate_launch_description():
     return LaunchDescription([
+        # The Fast DDS shared-memory transport lost service responses and discovery under the
+        # load of the start-up (lifecycle and spawner timeouts, BT errors, missions of 170-250 s
+        # instead of 120 s). With UDP only, the same runs took 116-126 s.
+        # dds_udp_only:=false keeps the default transport.
+        DeclareLaunchArgument('dds_udp_only', default_value='true'),
+        SetEnvironmentVariable('FASTDDS_BUILTIN_TRANSPORTS', 'UDPv4',
+                               condition=IfCondition(LaunchConfiguration('dds_udp_only'))),
         DeclareLaunchArgument('gui', default_value='false'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('perception', default_value='true'),

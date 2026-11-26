@@ -24,4 +24,5 @@ string failure_reason
 bool mission_running          # a RunMission goal runs on this robot
 bool nav_active               # a NavigateToPose goal runs (mission or coordinator)
 bool nav_ready                # all Nav2 lifecycle nodes are ACTIVE (the robot can navigate)
+bool systems_ready            # fork state and odometry arrive (the ros2_control controllers run)
 geometry_msgs/Point[] path_ahead   # Nav2 plan, next 6 m or less, 0.25 m between points (map frame)

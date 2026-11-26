@@ -200,3 +200,21 @@ def test_mecanum_overlay_enables_sideways_alignment_and_the_node_reads_it():
                 'insert_strafe_speed',
                 'stationary_time'):
         assert f"'{key}'" in source, key
+
+
+def test_controller_spawner_has_long_timeouts():
+    """The default 5 s switch timeout failed under the load of the start-up (no controllers)."""
+    launch = (PKG / 'launch' / 'control.launch.py').read_text()
+    assert "'--switch-timeout', '60'" in launch
+    assert "'--service-call-timeout', '30'" in launch
+
+
+@pytest.mark.parametrize('name', ['sim.launch.py', 'multi_sim.launch.py', 'sandbox.launch.py'])
+def test_top_level_launch_files_use_udp_only_dds_by_default(name):
+    """The shared-memory transport lost responses at the start-up (missions 170-250 s)."""
+    launch = PKG.parent / 'forklift_bringup' / 'launch' / name
+    if not launch.exists():
+        pytest.skip('bringup package is not in the source tree')
+    text = launch.read_text()
+    assert "SetEnvironmentVariable('FASTDDS_BUILTIN_TRANSPORTS', 'UDPv4'" in text
+    assert "DeclareLaunchArgument('dds_udp_only', default_value='true')" in text

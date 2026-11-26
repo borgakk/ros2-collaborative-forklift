@@ -149,3 +149,27 @@ def test_every_robot_type_has_its_overlay_file():
         path, content = launch.robot_type_overlay(name)
         assert (path == '') == (name == 'standard')
         assert isinstance(content, dict)
+
+
+def test_mecanum_controller_is_omnidirectional_and_the_smoother_allows_sideways_speed():
+    follow = OVERLAY['navigation']['controller_server']['FollowPath']
+    assert follow['plugin'].startswith('nav2_mppi_controller')
+    assert follow['motion_model'] == 'Omni'
+    smoother = OVERLAY['navigation']['velocity_smoother']
+    assert follow['vy_max'] > 0
+    assert smoother['max_velocity'][1] >= follow['vy_max']
+    assert smoother['min_velocity'][1] <= -follow['vy_max']
+    assert smoother['max_velocity'][0] >= follow['vx_max']
+    controllers = yaml.safe_load((SRC / 'forklift_control' / 'config' /
+                                  'controllers_mecanum.yaml').read_text())
+    hard = controllers['forklift_base_controller']['ros__parameters']
+    assert follow['vy_max'] <= hard['linear.y.max_velocity']
+
+
+def test_mppi_sampled_accelerations_are_not_the_smoother_limits():
+    """Low values (0.8 / 0.5) made the MPPI output rise by 0.01 m/s^2; the smoother limits."""
+    follow = OVERLAY['navigation']['controller_server']['FollowPath']
+    smoother = OVERLAY['navigation']['velocity_smoother']
+    assert follow['ax_max'] >= 2.0 and follow['ay_max'] >= 2.0 and follow['az_max'] >= 2.0
+    assert follow['ax_max'] > smoother['max_accel'][0]
+    assert -follow['ax_min'] > smoother['max_accel'][0]

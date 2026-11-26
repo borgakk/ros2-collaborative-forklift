@@ -184,15 +184,21 @@ tolerance). Check: 3 runs after the change, 2 completed missions, no push (pre-l
 placement error of BOX_A 2.2 and 3.1 cm; the third run did not start because of a start-up
 problem, see below).
 
-Start-up problem seen in several runs: the coordinator dispatched a task when the robot was
-"available" (heartbeat, localized) but Nav2 was not active yet (`Nav2 ended with status -2`), or the
-lifecycle start of a robot timed out (`get_state response lost`). Failed attempts before the lift
-counted toward `max_task_attempts`, and a task could become `FAILED` in the first 15 s.
-Fix (2026-11-26): the fleet agent asks the lifecycle state of the six Nav2 nodes and reports
-`RobotStatus.nav_ready` (a lost response keeps the last known state; unknown is not ready). The
-coordinator dispatches only if `localized and nav_ready` ("unavailable (Nav2 not active)"
-otherwise). After a task that failed before the lift, the robot gets no new task for
-`failure_cooldown` (10 s). Check: 3 runs, all `delivered 3/3` in 119 / 122 / 129 s; no start-up
-failure; BOX_A not pushed. In one run the robot changed twice between available and
-"Nav2 not active" and 2 navigation goals were rejected, but the mission still finished. Not fixed:
-if a robot never gets its Nav2 stack active, the other robot does all the work (237 s in one run).
+Start-up problems (2026-11-26), causes and fixes. Missions took 170–250 s or hung, in about
+every second run, until these were found:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Task given before Nav2 was active (`status -2`), attempts used up in seconds | The robot was "available" (heartbeat, localized) | The fleet agent reports `nav_ready` (6 Nav2 lifecycle nodes ACTIVE) and `systems_ready` (odometry and fork state arrive); the coordinator dispatches only if both are true; `failure_cooldown` 10 s |
+| `Exception when loading BT: compute_path_to_pose not available` (37 times in one run) | `wait_for_service_timeout` 1 s in `bt_navigator` | 10 s |
+| `get_state response lost` for 160 s, then the starter exited: the robot never got Nav2 | The same service client kept being used; the starter gave up | `lifecycle_starter` creates the clients again after 3 lost responses and never gives up |
+| `Switch controller timed out after 5 seconds`: no controllers, the lift waits for `joint_states` | Default spawner timeout | `--switch-timeout 60`, `--service-call-timeout 30` |
+| A pickup that did nothing for 18 minutes | `await send_goal_async` without a time limit; a lost response | The load handler waits at most 6 s and sends again (3 times), also for the Nav2 goal and the footprint switch |
+| All of the above, much less often | Fast DDS shared-memory transport (lost responses, slow discovery) and stale `/dev/shm` segments from killed processes | UDP only (`dds_udp_only`, default true); `stop_sim.sh` deletes unused segments |
+
+Check with the launch default (3 runs): `delivered 3/3` in 117 / 116 / 116 s, no lifecycle
+refresh, no navigation or BT error, no pallet push. With the shared-memory transport (3 runs,
+all fixes except UDP): 169 / 168 / 249 s, 18 and 34 client refreshes, 37 BT errors in one run.
+My own recorder processes (4 hours old, started with `kill` of the wrapping shell) also
+disturbed the early runs: they were DDS participants and wrote to the same files. Not fixed:
+the cause of the lost responses in the shared-memory transport (it may be a Fast DDS problem).

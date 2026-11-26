@@ -52,6 +52,24 @@ TRANSITION_FOR = {State.PRIMARY_STATE_UNCONFIGURED: Transition.TRANSITION_CONFIG
                   State.PRIMARY_STATE_INACTIVE: Transition.TRANSITION_ACTIVATE}
 
 
+class ReplyWatchdog:
+    """Count lost service responses in a row. After `limit`, ask for new clients."""
+
+    def __init__(self, limit=3):
+        self.limit, self.count = limit, 0
+
+    def answered(self):
+        self.count = 0
+
+    def lost(self):
+        """Register a lost response. Return True if the clients should be created again."""
+        self.count += 1
+        if self.count >= self.limit:
+            self.count = 0
+            return True
+        return False
+
+
 def call(node, client, request, timeout):
     future = client.call_async(request)
     rclpy.spin_until_future_complete(node, future, timeout_sec=timeout)
@@ -64,17 +82,30 @@ def make_clients(node, name):
             node.create_client(ChangeState, f'{name}/change_state'))
 
 
+def refresh_clients(node, name, clients):
+    """Create the clients of a node again. Old clients can stay without responses (DDS)."""
+    for client in clients[name]:
+        node.destroy_client(client)
+    clients[name] = make_clients(node, name)
+    node.get_logger().warn(f'{name}: service clients created again after lost responses')
+
+
 def bring_up(node, name, clients, request_timeout, deadline):
-    get_state, change = clients
+    """Set a node to ACTIVE. `clients` is the dict name -> (get_state, change_state) clients."""
     log = node.get_logger()
+    watchdog = ReplyWatchdog()
     while time.monotonic() < deadline:
+        get_state, change = clients[name]
         if not (get_state.wait_for_service(timeout_sec=1.0) and
                 change.wait_for_service(timeout_sec=1.0)):
             continue
         state = call(node, get_state, GetState.Request(), request_timeout)
         if state is None:
             log.warn(f'{name}: get_state response lost, retrying')
+            if watchdog.lost():
+                refresh_clients(node, name, clients)
             continue
+        watchdog.answered()
         current = state.current_state.id
         if current == State.PRIMARY_STATE_ACTIVE:
             log.info(f'{name}: active')
@@ -112,7 +143,7 @@ def supervise(node, names, clients, request_timeout, period, bring_up_timeout):
                 continue                    # lost response: examine again at the next period
             log.error(f'{name}: found {state.current_state.label} (restarted?); '
                       'bringing it up again')
-            if bring_up(node, name, clients[name], request_timeout,
+            if bring_up(node, name, clients, request_timeout,
                         time.monotonic() + bring_up_timeout):
                 log.info(f'{name}: recovered')
 
@@ -128,7 +159,7 @@ def wait_for_tf(node, tf, parent, child, timeout):
 
 def cycle(node, name, clients, request_timeout, deadline):
     """Set a node back to UNCONFIGURED (deactivate, cleanup). Then set it to ACTIVE again."""
-    get_state, change = clients
+    get_state, change = clients[name]
     for transition in (Transition.TRANSITION_DEACTIVATE, Transition.TRANSITION_CLEANUP):
         call(node, change, ChangeState.Request(transition=Transition(id=transition)),
              request_timeout)
@@ -182,9 +213,13 @@ def main(args=None):
         deadline = time.monotonic() + total_timeout
         # the sequence is important (for example, map_server before amcl)
         for name in names:
-            ok = bring_up(node, name, clients[name], request_timeout, deadline) and ok
-            if not ok:
-                break
+            # Never give up: a robot without Nav2 is useless, and a restart of the process is
+            # not configured. After a deadline, the clients are created again and the node is
+            # tried again.
+            while not bring_up(node, name, clients, request_timeout, deadline) and rclpy.ok():
+                node.get_logger().error(f'{name}: not active; trying again with new clients')
+                refresh_clients(node, name, clients)
+                deadline = time.monotonic() + total_timeout
         if ok:
             node.get_logger().info(f'all managed nodes active: {", ".join(names)}')
             if give_start_pose:
@@ -204,7 +239,7 @@ def main(args=None):
                     node.get_logger().warn(
                         f'no {verify[0]} -> {verify[1]} within {verify_timeout:.0f} s: '
                         f'restarting {names[-1]}')
-                    if cycle(node, names[-1], clients[names[-1]], request_timeout,
+                    if cycle(node, names[-1], clients, request_timeout,
                              time.monotonic() + total_timeout) and give_start_pose:
                         publish_initial_pose(node, *pose, stddev, 'map')
             if period > 0:

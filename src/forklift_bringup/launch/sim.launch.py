@@ -15,7 +15,7 @@ the saved map aligns with the world/mission frame (docs/navigation.md).
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
@@ -34,6 +34,13 @@ def generate_launch_description():
     sim_share = FindPackageShare('forklift_simulation')
 
     return LaunchDescription([
+        # The Fast DDS shared-memory transport lost service responses and discovery under the
+        # load of the start-up (lifecycle and spawner timeouts, BT errors, missions of 170-250 s
+        # instead of 120 s). With UDP only, the same runs took 116-126 s.
+        # dds_udp_only:=false keeps the default transport.
+        DeclareLaunchArgument('dds_udp_only', default_value='true'),
+        SetEnvironmentVariable('FASTDDS_BUILTIN_TRANSPORTS', 'UDPv4',
+                               condition=IfCondition(LaunchConfiguration('dds_udp_only'))),
         DeclareLaunchArgument('gui', default_value='false'),
         DeclareLaunchArgument('rviz', default_value='false'),
         DeclareLaunchArgument('world', default_value=PathJoinSubstitution(

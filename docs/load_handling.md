@@ -52,7 +52,7 @@ robot parameters:
    stationary, make sure that the lateral error is 3 cm or less and the heading error is 2° or
    less. If an error is more than this, move back 0.4 m and try again (2 retries). If the
    retries fail, the result is `ALIGNMENT_FAILED`.
-6. **Insert:** move the last 1.08 m straight along the docking line at 0.06 m/s. Near the
+6. **Insert:** move the last 1.08 m straight along the docking line at 0.15 m/s (it slows down near the end). Near the
    pallet, the QR code goes out of the camera view. Thus this step uses only odometry. If the
    robot stalls for 2 s, the result is `INSERTION_BLOCKED`.
 7. **Lift** to the transport height. After 1 s, the load estimate from the lift effort must be
@@ -91,7 +91,7 @@ robot parameters:
 | Item | Value | Basis |
 |---|---|---|
 | Lateral / heading error before insertion | 3 cm / 2° | 10 cm pocket clearance on each side, less 1.1 m of blind travel at 2° (≈ 4 cm) |
-| Speeds | approach 0.12, insert 0.06, reverse 0.06 m/s | slow docking; the rear is blind |
+| Speeds | approach 0.30, insert 0.15, reverse 0.25 m/s | docking was 85 % of the time of one box at 0.12 / 0.06 / 0.06; the rear LiDAR protects the reverse motion |
 | Approach steering gains | heading 2.0, lateral 5.0, ≤ 0.4 rad/s | removes 15 cm / 10° in 0.7 m (unit test) |
 | Lift | limits from the URDF (0–1 m, 0.2 m/s), action timeout 30 s | lift_controller refuses goals out of range |
 | Load check | 0.5–2.0 × mass to accept; < 5 kg means empty | effort − (110 kg × g), mass from the URDF |

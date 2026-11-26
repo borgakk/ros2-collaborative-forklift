@@ -29,13 +29,17 @@ load_handler:
     placement_yaw_tolerance_deg: 8.0
     platform_face_tolerance: 0.12    # LiDAR range to the platform face compared with the map value
     platform_reach: 0.30             # front of the mast upright (x 0.26 + 0.04), below the deck height
-    platform_face_margin: 0.04       # the insertion stops at this distance from the measured face
+    platform_face_margin: 0.02       # the insertion stops at this distance from the measured face (was 0.04: the
+                                     # pallet stopped about 4-7 cm short of its target)
     detection_timeout: 8.0
     min_detections: 5
     # Speeds (m/s). Reverse motion is short and slow (the LiDAR cannot see the rear).
-    approach_speed: 0.12
-    insert_speed: 0.06
-    reverse_speed: 0.06
+    # The controller slows down near the target (speed = 0.8 x remaining distance), so these are
+    # the maximum speeds on the long part. (Original values: 0.12, 0.06, 0.06. The docking took
+    # about 85 % of the time of one box.) The rear LiDAR protects the reverse motion.
+    approach_speed: 0.30
+    insert_speed: 0.15
+    reverse_speed: 0.25
     # Supervision
     stationary_timeout: 5.0
     stall_time: 2.0                  # motion is commanded but the robot does not move -> blocked
